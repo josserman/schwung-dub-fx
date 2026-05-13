@@ -49,7 +49,7 @@ static inline float pressure_relative(float pressure, float initial,
 #define PFX_CHORUS_BUF      (PFX_SAMPLE_RATE * 1)   /* 1 second for chorus/flanger */
 #define PFX_NUM_FX          32
 #define PFX_SLOT_PARAMS     3   /* params per FX slot (E1-E3) */
-#define PFX_NUM_GLOBALS     5   /* global params: DJ Filter, Lo EQ, Hi EQ, Exciter, D/W */
+#define PFX_NUM_GLOBALS     8   /* repeat, tilt, filter, iso, dry/wet */
 #define PFX_NUM_ALLPASS     6   /* phaser stages */
 
 /* ---- Pressure curve modes ---- */
@@ -190,6 +190,14 @@ typedef struct {
     float env;       /* smoothed gain */
 } ducker_t;
 
+/* ---- One-shot sample player ---- */
+typedef struct {
+    int16_t *buf;
+    int length;      /* mono frames */
+    int pos;
+    int playing;
+} sample_player_t;
+
 /* ---- Unified FX slot ---- */
 typedef struct {
     int active;           /* 1 = currently processing */
@@ -237,6 +245,9 @@ typedef struct {
     /* Saturate tone filter */
     svf_t sat_filter_l;
     svf_t sat_filter_r;
+
+    /* Siren/sample playback */
+    sample_player_t sample;
 } pfx_slot_t;
 
 /* ---- Audio source modes ---- */
@@ -257,16 +268,25 @@ typedef struct {
     float dj_filter;        /* 0..1, default 0.5 = off; <0.5 = LPF, >0.5 = HPF */
     float tilt_eq;          /* 0..1, default 0.5 = flat; <0.5 = bass, >0.5 = treble */
     float dry_wet;          /* 0..1, default 1 = full wet */
+    int filter_mode;        /* 0 = LPF, 1 = HPF */
+    float low_eq;           /* 0..1, low-band level for dub isolator */
+    float mid_eq;           /* 0..1, mid-band level for dub isolator */
+    float high_eq;          /* 0..1, high-band level for dub isolator */
+    float sub_eq;           /* 0..1, sub-band level for dub isolator */
 
     /* Repeat controls (E4-E6, global — applies to active repeat slot) */
     float repeat_rate;      /* 0..1, default 0.5; maps to beat division */
     float repeat_speed;     /* 0..1, default 0.5 = normal; 0=stop, 1=2x */
+    float echo_division;    /* 0..1 discrete mapping for 1/1..1/32 */
 
     /* Global filters (stereo pairs) */
     svf_t global_lp_l, global_lp_r;
     svf_t global_hp_l, global_hp_r;
     svf_t tilt_lp_l, tilt_lp_r;    /* Tilt EQ low shelf */
     svf_t tilt_hp_l, tilt_hp_r;    /* Tilt EQ high shelf */
+    svf_t iso_sub_l, iso_sub_r;
+    svf_t iso_low_l, iso_low_r;
+    svf_t iso_high_l, iso_high_r;
 
     /* Tempo */
     float bpm;
@@ -331,6 +351,13 @@ typedef struct {
     int diag_dump_countdown;     /* frames left to dump after activation */
     int diag_slot;               /* which slot triggered the dump */
 
+    /* Siren directory for hot-reload */
+    char sirens_dir[512];
+
+    /* Loaded siren filenames (basenames, populated by reload_sirens) */
+    char siren_file_names[8][256];
+    int  siren_file_count;
+
 } perf_fx_engine_t;
 
 /* ---- API ---- */
@@ -338,6 +365,9 @@ void pfx_engine_init(perf_fx_engine_t *e);
 void pfx_engine_destroy(perf_fx_engine_t *e);
 void pfx_engine_reset(perf_fx_engine_t *e);
 void pfx_engine_load_vinyl_crackle(perf_fx_engine_t *e, const char *wav_path);
+void pfx_engine_load_sample_into_slot(perf_fx_engine_t *e, int slot, const char *wav_path);
+void pfx_engine_reload_sirens(perf_fx_engine_t *e);
+int  pfx_get_siren_names_from_dir(perf_fx_engine_t *e, char *buf, int buf_len);
 
 /* Process one block (128 frames). Reads from host audio, writes to out_lr */
 void pfx_engine_render(perf_fx_engine_t *e, int16_t *out_lr, int frames);

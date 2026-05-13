@@ -1,11 +1,10 @@
 /*
- * Performance FX Module UI — v2 Architecture
+ * Dub FX Module UI — v2 Architecture
  *
  * 32 unified punch-in FX pads (hold=on, release=off)
  * Shift+hold = latch, Shift+hold latched = unlatch
- * E1: RPT Length  E2: RPT Speed  E3: RPT on/off
- * E4-E6: per-slot FX params (last touched pad)
- * E7: Tilt EQ  E8: DJ Filter
+ * Mix-first banked dub desk.
+ * Row buttons switch banks, shift+row toggles iso kills.
  */
 
 import {
@@ -70,18 +69,18 @@ const TRACK_CCS = [MoveRow1, MoveRow2, MoveRow3, MoveRow4];
 
 /* FX Names (32) */
 const FX_NAMES = [
-    /* Row 4: Time/Repeat */
-    'RPT 1/4', 'RPT 1/8', 'RPT 1/16', 'RPT TRP',
-    'STUTTER', 'SCATTER', 'REVERSE', 'STRETCH',
-    /* Row 3: Filter Sweeps */
-    'LP SWP\u2193', 'HP SWP\u2191', 'BP RISE', 'BP FALL',
-    'RESO SW', 'PHASER', 'FLANGER', 'AUTOFLT',
-    /* Row 2: Space Throws */
-    'DLY 1/4', 'DLY D8', 'PP 1/4', 'PP D8',
-    'ROOM', 'HALL', 'DK VERB', 'SPRING',
-    /* Row 1: Distortion/Rhythm */
-    'CRUSH', 'DWNSMPL', 'SATURATE', 'GATE',
-    'TREMOLO', 'OCT DN', 'VINYL', 'VNL BRK'
+    /* Top row: desk controls */
+    'HIGH', 'MID', 'LOW', 'DUB',
+    'CTRL 5', 'CTRL 6', 'CTRL 7', 'FILTER MODE',
+    /* Row 2: Echo lane */
+    'ECHO', 'ECHO 2', 'ECHO 3', 'ECHO 4',
+    'ECHO 5', 'ECHO 6', 'ECHO 7', 'ECHO 8',
+    /* Row 3: Reverb lane */
+    'REVERB', 'VERB 2', 'VERB 3', 'VERB 4',
+    'VERB 5', 'VERB 6', 'VERB 7', 'VERB 8',
+    /* Row 4: Siren lane */
+    'BUBBLE', 'SIGNAL', 'SIGNAL 2', 'SILLY',
+    'PING', 'LANDING', 'SHUB', 'SHOCK'
 ];
 
 /* Per-slot param names (E1-E3, indexed by slot) */
@@ -104,15 +103,15 @@ const SLOT_PARAM_NAMES = [
     ['Depth',  'Feedbk', 'Mix'],
     ['Depth',  'Feedbk', 'Mix'],
     ['Depth',  'Center', 'Reso'],
-    /* Row 2: Space Throws */
+    /* Row 2: Space Throws — delays: Feedbk/Tone/Level; reverbs: Decay/Tone/Level */
     ['Feedbk', 'Tone',   'Level'],
     ['Feedbk', 'Tone',   'Level'],
     ['Feedbk', 'Tone',   'Level'],
     ['Feedbk', 'Tone',   'Level'],
-    ['Time',   'Tone',   'Level'],
-    ['Time',   'Tone',   'Level'],
-    ['Time',   'Dark',   'Level'],
-    ['Time',   'Tone',   'Level'],
+    ['Decay',  'Tone',   'Level'],
+    ['Decay',  'Tone',   'Level'],
+    ['Decay',  'Tone',   'Level'],
+    ['Decay',  'Tone',   'Level'],
     /* Row 1: Distortion & Rhythm */
     ['Filter', 'Tone',   'Mix'],
     ['Filter', 'Tone',   'Mix'],
@@ -124,11 +123,44 @@ const SLOT_PARAM_NAMES = [
     ['Speed',  'Tone',   'Mix']
 ];
 
-/* Global param labels (E4-E8) */
-const GLOBAL_LABELS = ['Length', 'Speed', 'Loop', 'Tilt', 'DJ Flt'];
-const GLOBAL_KEYS = ['repeat_rate', 'repeat_speed', 'rpt_toggle', 'tilt_eq', 'dj_filter'];
-const GLOBAL_DEFAULTS = [0.5, 0.5, 0.0, 0.5, 0.5];
-const NUM_GLOBALS = 5;
+const ISO_LABELS = ['High', 'Mid', 'Low', 'Sub'];
+const DIVISION_LABELS = ['1:1', '1/2', '1/4', '1/8', '1/16', '1/32'];
+const BANK_MIX = 0;
+const BANK_ECHO = 1;
+const BANK_REVERB = 2;
+const BANK_SIREN = 3;
+const BANK_NAMES = ['MIX', 'ECHO', 'VERB', 'SIREN'];
+const ECHO_SLOTS = [16, 17, 18, 19];
+const REVERB_SLOTS = [20, 21, 22, 23];
+const SIREN_SLOTS = [10, 11, 15];
+const TOP_ROW_SLOTS = [0, 1, 2, 3, 4, 5, 6, 7];
+const ECHO_PAD_SLOTS = [8, 9, 10, 11, 12, 13, 14, 15];
+const REVERB_PAD_SLOTS = [16, 17, 18, 19, 20, 21, 22, 23];
+const SIREN_PAD_SLOTS = [24, 25, 26, 27, 28, 29, 30, 31];
+const PAD_SLOT_TO_FX_SLOT = new Array(NUM_SLOTS).fill(-1);
+PAD_SLOT_TO_FX_SLOT[8] = 16;
+PAD_SLOT_TO_FX_SLOT[16] = 20;
+PAD_SLOT_TO_FX_SLOT[24] = 24;
+PAD_SLOT_TO_FX_SLOT[25] = 25;
+PAD_SLOT_TO_FX_SLOT[26] = 26;
+PAD_SLOT_TO_FX_SLOT[27] = 27;
+PAD_SLOT_TO_FX_SLOT[28] = 28;
+PAD_SLOT_TO_FX_SLOT[29] = 29;
+PAD_SLOT_TO_FX_SLOT[30] = 30;
+PAD_SLOT_TO_FX_SLOT[31] = 31;
+const TRACK_BANKS = [BANK_MIX, BANK_ECHO, BANK_REVERB, BANK_SIREN];
+const KNOB_COLUMN_X = [0, 32, 64, 96];
+const MIDIMIX_SPACE_SLOTS = [16, 17, 18, 19, 20, 21, 22, 23];
+const MIDIMIX_KNOB_ROWS = [
+    [30, 31, 32, 33, 34, 35, 36, 37],
+    [38, 39, 40, 41, 42, 43, 44, 45],
+    [46, 47, 48, 49, 50, 51, 52, 53]
+];
+const MIDIMIX_FADERS = [0, 1, 2, 3, 4, 5, 6, 7];
+const MIDIMIX_MASTER = 54;
+const MIDIMIX_REC = [2, 3, 4, 5, 6, 7, 8, 9];
+const MIDIMIX_MUTE = [12, 13, 14, 15, 16, 17, 18, 19];
+const MIDIMIX_SOLO = [20, 21, 22, 23, 24, 25, 26, 27];
 
 /* LED color mapping per slot */
 const BRIGHT_COLORS = [];
@@ -194,8 +226,18 @@ for (let i = 0; i < NUM_SLOTS; i++) {
 let lastTouchedSlot = -1;
 /* Last repeat slot used (for step button toggle) */
 let lastRepeatSlot = 0; /* default to RPT 1/4 (slot 0) */
-/* Global param values (0.0-1.0) */
-let globalValues = GLOBAL_DEFAULTS.slice();
+let activeBank = BANK_MIX;
+let heldFxBank = -1;
+let echoDivisionValue = 0.4;
+let filterCutoffValue = 0.8;
+let repeatSpeedValue = 0.5;
+let tiltEqValue = 0.5;
+
+/* Siren file browser */
+let sirenAssignMode = false;
+let sirenAssignPadSlot = -1;
+let sirenAssignFiles = [];
+let sirenAssignIdx = 0;
 
 /* Track routing */
 let trackRouted = [false, false, false, false];
@@ -226,9 +268,14 @@ let audioSource = 1; /* Always Move Mix */
 
 /* Persistence */
 let autosaveCounter = 0;
+let syncCounter = 0;
 const AUTOSAVE_INTERVAL = 440;
 let currentSetUUID = '';
 let stateLoaded = false;
+let isoValues = [1.0, 1.0, 1.0, 1.0];
+let isoRestoreValues = [1.0, 1.0, 1.0, 1.0];
+let dryWetValue = 1.0;
+let filterMode = 0; /* 0=LPF, 1=HPF */
 
 /* ================================================================
  * Persistence
@@ -257,9 +304,9 @@ function loadState() {
 
         if (state.fxLatched) fxLatched = state.fxLatched;
         if (state.version >= 8) {
-            /* v8: gate defaults to 0, speed detent */
-            if (state.globalValues && state.globalValues.length >= NUM_GLOBALS) {
-                globalValues = state.globalValues.slice(0, NUM_GLOBALS);
+            /* State loading is best-effort only for older experiments. */
+            if (state.globalValues && state.globalValues.length > 0) {
+                echoDivisionValue = state.globalValues[0] || echoDivisionValue;
             }
             if (state.slotParams && state.slotParams.length >= NUM_SLOTS) {
                 slotParams = state.slotParams;
@@ -270,9 +317,6 @@ function loadState() {
             if (state.lastRepeatSlot !== undefined) {
                 lastRepeatSlot = state.lastRepeatSlot;
             }
-        } else {
-            /* v2-v7: old rate system, old defaults, or old gate defaults — reset */
-            globalValues = GLOBAL_DEFAULTS.slice();
         }
         /* audioSource always 1 (Move Mix), trackRouted unused */
         if (state.bpm !== undefined) bpm = state.bpm;
@@ -281,11 +325,9 @@ function loadState() {
         sendParam('bpm', String(bpm));
         sendParam('audio_source', '1'); /* Always Move Mix */
 
-        /* Restore global params (skip rpt_toggle which is UI-only) */
-        for (let i = 0; i < NUM_GLOBALS; i++) {
-            if (GLOBAL_KEYS[i] === 'rpt_toggle') continue;
-            sendParam(GLOBAL_KEYS[i], globalValues[i].toFixed(3));
-        }
+        sendParam('echo_division', echoDivisionValue.toFixed(3));
+        sendParam('repeat_speed', repeatSpeedValue.toFixed(3));
+        sendParam('dj_filter', filterCutoffValue.toFixed(3));
 
         /* Restore per-slot params */
         for (let i = 0; i < NUM_SLOTS; i++) {
@@ -365,6 +407,15 @@ function handleTapTempo() {
  * ================================================================ */
 
 function getPadColor(slot) {
+    if (slot >= 0 && slot <= 3) {
+        return isoValues[slot] > 0.01 ? BrightGreen : BrightRed;
+    }
+    if (slot === 7) {
+        return filterMode === 0 ? BrightGreen : AzureBlue;
+    }
+    if ((slot >= 4 && slot <= 6) || (slot >= 9 && slot <= 15) || (slot >= 17 && slot <= 23) || (slot >= 27 && slot <= 31)) {
+        return DarkGrey;
+    }
     if (fxLatched[slot]) {
         return BrightRed;
     }
@@ -385,7 +436,7 @@ function buildLedList() {
         });
     }
 
-    /* Step buttons (unused — all off) */
+    /* Step buttons are left off to avoid stealing focus back to native Move pages. */
     for (let i = 0; i < 16; i++) {
         leds.push({ note: MoveSteps[i], color: Black });
     }
@@ -405,15 +456,7 @@ function setupLedBatch() {
     ledInitIndex = end;
     if (ledInitIndex >= leds.length) {
         ledInitPending = false;
-        /* Button LEDs */
-        setButtonLED(MoveUndo, bypassed ? WhiteLedBright : WhiteLedDim);
-        setButtonLED(MoveBack, WhiteLedDim);
-        setButtonLED(MoveShift, WhiteLedDim);
-
-        /* Track button LEDs */
-        for (let i = 0; i < 4; i++) {
-            setButtonLED(TRACK_CCS[i], WhiteLedDim);
-        }
+        refreshButtonLEDs();
     }
 }
 
@@ -429,6 +472,26 @@ function refreshAllPadLEDs() {
     }
 }
 
+function refreshStepLEDs() {
+    for (let i = 0; i < 16; i++) {
+        setLED(MoveSteps[i], Black);
+    }
+}
+
+function refreshButtonLEDs() {
+    setButtonLED(MoveUndo, bypassed ? WhiteLedBright : WhiteLedDim);
+    setButtonLED(MoveBack, WhiteLedDim);
+    setButtonLED(MoveShift, shiftHeld ? WhiteLedBright : WhiteLedDim);
+    setButtonLED(MoveLoop, filterMode ? WhiteLedBright : WhiteLedDim);
+    setButtonLED(MoveCapture, WhiteLedDim);
+
+    for (let i = 0; i < 4; i++) {
+        const bank = TRACK_BANKS[i];
+        const isSelected = bank === BANK_MIX ? heldFxBank < 0 : heldFxBank === bank;
+        setButtonLED(TRACK_CCS[i], isSelected ? WhiteLedBright : WhiteLedDim);
+    }
+}
+
 /* ================================================================
  * Display
  * ================================================================ */
@@ -441,7 +504,8 @@ function drawMainView() {
     for (let i = 0; i < NUM_SLOTS; i++) {
         if (fxActive[i]) activeCount++;
     }
-    print(0, 0, `PFX ${bpm.toFixed(0)} [${activeCount}]`, 1);
+    const bank = heldFxBank >= 0 ? heldFxBank : BANK_MIX;
+    print(0, 0, `DUB ${BANK_NAMES[bank]} ${filterMode === 0 ? 'LPF' : 'HPF'}`, 1);
     draw_line(0, 9, SCREEN_W, 9, 1);
 
     /* Lines 2-3: names of active/latched FX */
@@ -472,33 +536,17 @@ function drawMainView() {
         print(0, 21, activeLine2, 1);
     }
 
-    /* Separator */
     draw_line(0, 30, SCREEN_W, 30, 1);
-
-    /* Line 4: E1-E3 (RPT controls) + E4 (per-slot param 1) */
-    const timeLabel = getTimeLabel(globalValues[0]);
-    print(0, 33, timeLabel, 1);     /* E1: RPT Length */
-    const spd = globalValues[1];
-    print(32, 33, spd < 0.48 ? 'Slow' : spd > 0.52 ? 'Fast' : 'Nrml', 1); /* E2: Speed */
-    const rptOn = fxActive[lastRepeatSlot] || fxLatched[lastRepeatSlot];
-    print(64, 33, rptOn ? 'LP*' : 'Loop', 1);  /* E3: Loop SW */
-    /* E4: first per-slot param */
-    if (lastTouchedSlot >= 0 && lastTouchedSlot < NUM_SLOTS) {
-        print(96, 33, SLOT_PARAM_NAMES[lastTouchedSlot][0], 1);
-    } else {
-        print(96, 33, '---', 1);
-    }
-
-    /* Line 5: E5-E8 labels */
-    if (lastTouchedSlot >= 0 && lastTouchedSlot < NUM_SLOTS) {
-        print(0, 44, SLOT_PARAM_NAMES[lastTouchedSlot][1], 1);  /* E5 */
-        print(32, 44, SLOT_PARAM_NAMES[lastTouchedSlot][2], 1); /* E6 */
-    } else {
-        print(0, 44, '---', 1);
-        print(32, 44, '---', 1);
-    }
-    print(64, 44, 'Tilt', 1);       /* E7: Tilt EQ */
-    print(96, 44, 'DJ', 1);         /* E8: DJ Filter */
+    print(0, 33, getKnobLabel(bank, 0), 1);
+    print(32, 33, getKnobLabel(bank, 1), 1);
+    print(64, 33, getKnobLabel(bank, 2), 1);
+    print(96, 33, getKnobLabel(bank, 3), 1);
+    print(0, 44, getKnobLabel(bank, 4), 1);
+    print(32, 44, getKnobLabel(bank, 5), 1);
+    print(64, 44, getKnobLabel(bank, 6), 1);
+    print(96, 44, getKnobLabel(bank, 7), 1);
+    print(0, 55, `${bpm.toFixed(0)} BPM`, 1);
+    print(52, 55, `FX ${activeCount}`, 1);
 
     /* Bypass overlay */
     if (bypassed) {
@@ -517,8 +565,9 @@ function drawOverlay() {
 
     print(0, 16, overlayParam, 1);
 
+    const isNumeric = /^-?\d+(\.\d+)?$/.test(overlayValue);
     let numVal = parseFloat(overlayValue);
-    if (!isNaN(numVal)) {
+    if (isNumeric && !isNaN(numVal)) {
         let barWidth = Math.floor(numVal * 110);
         if (barWidth < 0) barWidth = 0;
         if (barWidth > 110) barWidth = 110;
@@ -537,13 +586,64 @@ function drawOverlay() {
  * Rate label helper (maps 0..1 to musical division name)
  * ================================================================ */
 
+function drawFileBrowser() {
+    clear_screen();
+    const padNum = sirenAssignPadSlot - 24 + 1;
+    print(0, 0, `ASSIGN PAD ${padNum}`, 1);
+    draw_line(0, 10, SCREEN_W, 10, 1);
+
+    if (sirenAssignFiles.length === 0) {
+        print(0, 16, 'No files found', 1);
+        print(0, 28, 'Back: exit', 1);
+        return;
+    }
+
+    const total = sirenAssignFiles.length;
+    const idx = sirenAssignIdx;
+    /* Show up to 3 items with selection highlighted */
+    const startIdx = Math.max(0, Math.min(idx - 1, total - 3));
+    const endIdx = Math.min(total - 1, startIdx + 2);
+
+    for (let i = startIdx; i <= endIdx; i++) {
+        const y = 14 + (i - startIdx) * 13;
+        const name = sirenAssignFiles[i].replace(/\.wav$/i, '');
+        const truncated = name.length > 19 ? name.substring(0, 18) + '~' : name;
+        if (i === idx) {
+            fill_rect(0, y - 1, 128, 12, 1);
+            print(2, y, truncated, 0);
+        } else {
+            print(2, y, truncated, 1);
+        }
+    }
+    print(0, 55, `${idx + 1}/${total}  CLK=LOAD BCK=EXIT`, 1);
+}
+
+function enterSirenAssignMode(slot) {
+    sirenAssignPadSlot = slot;
+    sirenAssignIdx = 0;
+    try {
+        const names = getParam('siren_names');
+        sirenAssignFiles = (names && names.length > 0)
+            ? names.split('\n').filter(s => s.length > 0)
+            : [];
+    } catch (_) {
+        sirenAssignFiles = [];
+    }
+    sirenAssignMode = true;
+}
+
+function exitSirenAssignMode() {
+    sirenAssignMode = false;
+    sirenAssignPadSlot = -1;
+}
+
 function resetRepeatKnobs(slot) {
     /* Reset filter to center (bypass), gate to off, speed to normal */
     slotParams[slot][0] = 0.5;  /* filter = center */
     slotParams[slot][1] = 0.0;  /* gate = off */
     sendParam(`punch_${slot}_param_0`, '0.500');
     sendParam(`punch_${slot}_param_1`, '0.000');
-    globalValues[1] = 0.5;      /* speed = normal */
+    repeatSpeedValue = 0.5;      /* speed = normal */
     sendParam('repeat_speed', '0.500');
 }
 
@@ -565,6 +665,120 @@ function getTimeLabel(rate01) {
     if (seconds >= 1.0) return seconds.toFixed(1) + 's';
     const ms = Math.round(seconds * 1000);
     return ms + 'ms';
+}
+
+function getDivisionIndex(value) {
+    let idx = Math.round(value * 5.0);
+    if (idx < 0) idx = 0;
+    if (idx > 5) idx = 5;
+    return idx;
+}
+
+function getDivisionValue(index) {
+    let idx = index;
+    if (idx < 0) idx = 0;
+    if (idx > 5) idx = 5;
+    return idx / 5.0;
+}
+
+function getDivisionLabel(value) {
+    return DIVISION_LABELS[getDivisionIndex(value)];
+}
+
+function getKnobLabel(bank, knobIndex) {
+    if (bank === BANK_ECHO) {
+        return ['Time', 'Feed', 'Tone', 'Vol', 'Warm', 'D/W', '---', 'Filt'][knobIndex];
+    }
+    if (bank === BANK_REVERB) {
+        return ['Decay', 'Tone', 'Vol', '---', '---', '---', '---', 'Filt'][knobIndex];
+    }
+    if (bank === BANK_SIREN) {
+        return ['Tone', 'Drive', 'Vol', '---', '---', '---', '---', 'Filt'][knobIndex];
+    }
+    return ['High', 'Mid', 'Low', 'Sub', 'Master', 'Echo', 'Verb', 'Filt'][knobIndex];
+}
+
+function setBank(bank) {
+    activeBank = bank;
+    heldFxBank = bank === BANK_MIX ? -1 : bank;
+    refreshButtonLEDs();
+    showOverlay('Bank', BANK_NAMES[bank], '');
+}
+
+function setGroupedSlotParam(slots, paramIdx, value, title, label) {
+    const v = Math.max(0.0, Math.min(1.0, value));
+    for (const slot of slots) {
+        slotParams[slot][paramIdx] = v;
+        sendParam(`punch_${slot}_param_${paramIdx}`, v.toFixed(3));
+    }
+    if (slots.length > 0) {
+        lastTouchedSlot = slots[0];
+    }
+    showOverlay(title, label, v.toFixed(2));
+}
+
+function nudgeValue(value, delta, step = 0.01) {
+    let v = value + delta * step;
+    if (v < 0.0) v = 0.0;
+    if (v > 1.0) v = 1.0;
+    return v;
+}
+
+function getSlotBank(slot) {
+    if (ECHO_PAD_SLOTS.includes(slot)) return BANK_ECHO;
+    if (REVERB_PAD_SLOTS.includes(slot)) return BANK_REVERB;
+    if (SIREN_PAD_SLOTS.includes(slot)) return BANK_SIREN;
+    return BANK_MIX;
+}
+
+function getEngineSlotForPad(slot) {
+    return PAD_SLOT_TO_FX_SLOT[slot];
+}
+
+function refreshHeldFxBank() {
+    for (let i = 0; i < NUM_SLOTS; i++) {
+        if (!fxHeld[i]) continue;
+        const bank = getSlotBank(i);
+        if (bank !== BANK_MIX) {
+            heldFxBank = bank;
+            activeBank = bank;
+            refreshButtonLEDs();
+            return;
+        }
+    }
+    /* Fall back to most-recently-touched latched non-MIX slot */
+    if (lastTouchedSlot >= 0 && fxLatched[lastTouchedSlot]) {
+        const lbank = getSlotBank(lastTouchedSlot);
+        if (lbank !== BANK_MIX) {
+            heldFxBank = lbank;
+            activeBank = lbank;
+            refreshButtonLEDs();
+            return;
+        }
+    }
+    for (let i = 0; i < NUM_SLOTS; i++) {
+        if (!fxLatched[i]) continue;
+        const lbank = getSlotBank(i);
+        if (lbank !== BANK_MIX) {
+            heldFxBank = lbank;
+            activeBank = lbank;
+            refreshButtonLEDs();
+            return;
+        }
+    }
+    /* Sticky: stay on bank of last-touched slot (handles siren one-shots) */
+    if (lastTouchedSlot >= 0) {
+        const lbank = getSlotBank(lastTouchedSlot);
+        if (lbank !== BANK_MIX) {
+            heldFxBank = lbank;
+            activeBank = lbank;
+            refreshButtonLEDs();
+            return;
+        }
+    }
+    heldFxBank = -1;
+    activeBank = BANK_MIX;
+    refreshButtonLEDs();
 }
 
 /* ================================================================
@@ -633,30 +847,53 @@ function showOverlay(title, param, value) {
 function handlePadOn(note, velocity) {
     const slot = NOTE_TO_SLOT[note];
     if (slot === undefined) return;
+    const engineSlot = getEngineSlotForPad(slot);
+    const slotBank = getSlotBank(slot);
 
     const velNorm = (velocity / 127.0).toFixed(3);
 
+    if (!shiftHeld) {
+        if (slot >= 0 && slot <= 3) {
+            toggleIsoKill(slot);
+            refreshPadLED(slot);
+            return;
+        }
+        if (slot === 7) {
+            filterMode = filterMode ? 0 : 1;
+            sendParam('filter_mode', String(filterMode));
+            refreshPadLED(slot);
+            showOverlay('Filter', filterMode === 0 ? 'LPF Mode' : 'HPF Mode', '');
+            return;
+        }
+        if (slot >= 4 && slot <= 6) {
+            showOverlay('Controls', 'Reserved', '');
+            return;
+        }
+    }
+
     if (shiftHeld) {
-        /* Shift+hold = latch toggle */
+        /* Shift+siren pad = enter file browser for that pad */
+        if (SIREN_PAD_SLOTS.includes(slot)) {
+            lastTouchedSlot = slot;
+            enterSirenAssignMode(slot);
+            return;
+        }
+        if (engineSlot < 0) {
+            showOverlay(FX_NAMES[slot], 'Reserved', '');
+            return;
+        }
+        /* Shift+pad press = latch toggle */
         if (fxLatched[slot]) {
             /* Unlatch */
-            fxLatched[slot] = false;
-            fxActive[slot] = false;
-            sendParam(`punch_${slot}_latch`, '0');
-            sendParam(`punch_${slot}_off`, '1');
+            deactivateSlot(slot);
             showOverlay(FX_NAMES[slot], 'Unlatched', '');
         } else {
             /* Latch on */
             fxLatched[slot] = true;
             fxActive[slot] = true;
             lastTouchedSlot = slot;
-            if (slot <= 4) {
-                lastRepeatSlot = slot;
-                globalValues[0] = bpmSyncedRate(slot);
-                resetRepeatKnobs(slot);
-            }
-            sendParam(`punch_${slot}_on`, velNorm);
-            sendParam(`punch_${slot}_latch`, '1');
+            sendParam(`punch_${engineSlot}_on`, velNorm);
+            sendParam(`punch_${engineSlot}_latch`, '1');
             showOverlay(FX_NAMES[slot], 'Latched', '');
         }
     } else {
@@ -668,20 +905,27 @@ function handlePadOn(note, velocity) {
             refreshPadLED(slot);
             return;
         }
+        if (slotBank !== BANK_MIX) {
+            heldFxBank = slotBank;
+            activeBank = slotBank;
+            refreshButtonLEDs();
+            showOverlay('Hold FX', BANK_NAMES[slotBank], '');
+        }
+        if (engineSlot < 0) {
+            fxHeld[slot] = true;
+            showOverlay(FX_NAMES[slot], 'Macro Soon', '');
+            refreshPadLED(slot);
+            return;
+        }
         /* Normal punch-in: hold = on.
          * If already active (missed note-off), deactivate first. */
         if (fxActive[slot]) {
-            sendParam(`punch_${slot}_off`, '1');
+            deactivateSlot(slot);
         }
         fxActive[slot] = true;
         fxHeld[slot] = true;
         lastTouchedSlot = slot;
-        if (slot <= 4) {
-            lastRepeatSlot = slot;
-            globalValues[0] = bpmSyncedRate(slot);
-            resetRepeatKnobs(slot);
-        }
-        sendParam(`punch_${slot}_on`, velNorm);
+        sendParam(`punch_${engineSlot}_on`, velNorm);
     }
 
     refreshPadLED(slot);
@@ -690,16 +934,25 @@ function handlePadOn(note, velocity) {
 function handlePadOff(note) {
     const slot = NOTE_TO_SLOT[note];
     if (slot === undefined) return;
+    const engineSlot = getEngineSlotForPad(slot);
 
     fxHeld[slot] = false;
 
     /* If latched, pad release does nothing */
-    if (fxLatched[slot]) return;
+    if (fxLatched[slot]) {
+        refreshHeldFxBank();
+        return;
+    }
+
+    if (engineSlot < 0) {
+        refreshHeldFxBank();
+        refreshPadLED(slot);
+        return;
+    }
 
     /* Normal release */
-    fxActive[slot] = false;
-    sendParam(`punch_${slot}_off`, '1');
-    refreshPadLED(slot);
+    deactivateSlot(slot);
+    refreshHeldFxBank();
 }
 
 /* Per-slot pressure throttle so simultaneous pad presses don't starve each other */
@@ -709,6 +962,8 @@ const PRESSURE_THROTTLE_MS = 30; /* Don't send pressure faster than ~33Hz */
 function handleAftertouch(note, pressure) {
     const slot = NOTE_TO_SLOT[note];
     if (slot === undefined) return;
+    const engineSlot = getEngineSlotForPad(slot);
+    if (engineSlot < 0) return;
     if (!fxActive[slot]) return;
 
     /* Per-slot throttle — each pad has its own timer */
@@ -716,79 +971,181 @@ function handleAftertouch(note, pressure) {
     if (now - lastPressureTime[slot] < PRESSURE_THROTTLE_MS) return;
     lastPressureTime[slot] = now;
 
-    sendParam(`punch_${slot}_pressure`, (pressure / 127.0).toFixed(3));
+    sendParam(`punch_${engineSlot}_pressure`, (pressure / 127.0).toFixed(3));
+}
+
+function deactivateSlot(slot) {
+    const engineSlot = getEngineSlotForPad(slot);
+    fxHeld[slot] = false;
+    fxLatched[slot] = false;
+    fxActive[slot] = false;
+    if (engineSlot >= 0) {
+        sendParam(`punch_${engineSlot}_latch`, '0');
+        sendParam(`punch_${engineSlot}_off`, '1');
+    }
+    refreshPadLED(slot);
+}
+
+function deactivateAllSlots() {
+    for (let i = 0; i < NUM_SLOTS; i++) {
+        deactivateSlot(i);
+    }
+    refreshHeldFxBank();
 }
 
 function handleStep(stepIdx, pressed) {
-    /* Step buttons unused — reserved for future */
+    void stepIdx;
+    void pressed;
+    /* Step buttons intentionally unused in overtake mode:
+     * on current Move firmware they appear to leak through to the native UI. */
+}
+
+function setIsoBand(bandIdx, value) {
+    const v = Math.max(0.0, Math.min(1.0, value));
+    isoValues[bandIdx] = v;
+    if (v > 0.01) isoRestoreValues[bandIdx] = v;
+    const key = bandIdx === 0
+        ? 'high_eq'
+        : bandIdx === 1
+            ? 'mid_eq'
+            : bandIdx === 2
+                ? 'low_eq'
+                : 'sub_eq';
+    sendParam(key, v.toFixed(3));
+}
+
+function toggleIsoKill(bandIdx) {
+    if (isoValues[bandIdx] > 0.01) {
+        isoRestoreValues[bandIdx] = isoValues[bandIdx];
+        setIsoBand(bandIdx, 0.0);
+        showOverlay('Isolator', `${ISO_LABELS[bandIdx]} Kill`, '0.00');
+    } else {
+        const restore = isoRestoreValues[bandIdx] > 0.01 ? isoRestoreValues[bandIdx] : 1.0;
+        setIsoBand(bandIdx, restore);
+        showOverlay('Isolator', `${ISO_LABELS[bandIdx]} Back`, isoValues[bandIdx].toFixed(2));
+    }
+}
+
+function setSpaceSlotParam(slot, paramIdx, value) {
+    const v = Math.max(0.0, Math.min(1.0, value));
+    slotParams[slot][paramIdx] = v;
+    lastTouchedSlot = slot;
+    sendParam(`punch_${slot}_param_${paramIdx}`, v.toFixed(3));
+    showOverlay(FX_NAMES[slot], SLOT_PARAM_NAMES[slot][paramIdx], v.toFixed(2));
+}
+
+function setLatchedSlot(slot, shouldLatch) {
+    const engineSlot = getEngineSlotForPad(slot);
+    if (engineSlot < 0) return;
+    if (shouldLatch) {
+        fxLatched[slot] = true;
+        fxActive[slot] = true;
+        lastTouchedSlot = slot;
+        sendParam(`punch_${engineSlot}_on`, '0.700');
+        sendParam(`punch_${engineSlot}_latch`, '1');
+        showOverlay(FX_NAMES[slot], 'Latched', '');
+    } else {
+        deactivateSlot(slot);
+        showOverlay(FX_NAMES[slot], 'Released', '');
+    }
+    refreshPadLED(slot);
 }
 
 function handleKnob(knobIndex, delta) {
-    if (knobIndex === 0) {
-        /* E1: RPT Length — free seconds */
-        let v = globalValues[0] + delta * 0.01;
-        v = Math.max(0.0, Math.min(1.0, v));
-        globalValues[0] = v;
-        sendParam('repeat_rate', v.toFixed(3));
-        const timeLabel = getTimeLabel(v);
-        showOverlay('Repeat', `Length: ${timeLabel}`, v.toFixed(2));
-    } else if (knobIndex === 1) {
-        /* E2: RPT Speed — detent around 0.5 (normal) */
-        let v = globalValues[1] + delta * 0.01;
-        v = Math.max(0.0, Math.min(1.0, v));
-        /* Snap to 0.5 when crossing through the detent zone */
-        if (v >= 0.49 && v <= 0.51) v = 0.5;
-        globalValues[1] = v;
-        sendParam('repeat_speed', v.toFixed(3));
-        const label = v < 0.49 ? 'Slow' : v > 0.51 ? 'Fast' : 'Normal';
-        showOverlay('Repeat', `Speed: ${label}`, v.toFixed(2));
-    } else if (knobIndex === 2) {
-        /* E3: RPT on/off — turn right = on, turn left = off */
-        const slot = lastRepeatSlot;
-        if (delta > 0 && !fxActive[slot]) {
-            fxLatched[slot] = true;
-            fxActive[slot] = true;
-            lastTouchedSlot = slot;
-            sendParam(`punch_${slot}_on`, '0.700');
-            sendParam(`punch_${slot}_latch`, '1');
-            globalValues[2] = 1.0;
-            showOverlay(FX_NAMES[slot], 'Loop ON', '1.00');
-        } else if (delta < 0 && fxActive[slot]) {
-            fxLatched[slot] = false;
-            fxActive[slot] = false;
-            sendParam(`punch_${slot}_latch`, '0');
-            sendParam(`punch_${slot}_off`, '1');
-            globalValues[2] = 0.0;
-            showOverlay(FX_NAMES[slot], 'Loop OFF', '0.00');
-        }
-        refreshPadLED(slot);
-    } else if (knobIndex >= 3 && knobIndex <= 5) {
-        /* E4-E6: per-slot params for last touched pad */
-        if (lastTouchedSlot < 0 || lastTouchedSlot >= NUM_SLOTS) {
-            showOverlay('No FX', 'Tap a pad first', '');
+    const bank = heldFxBank >= 0 ? heldFxBank : BANK_MIX;
+
+    if (bank === BANK_MIX && knobIndex >= 0 && knobIndex <= 3) {
+        const next = nudgeValue(isoValues[knobIndex], delta);
+        setIsoBand(knobIndex, next);
+        showOverlay('Mix', ISO_LABELS[knobIndex], next.toFixed(2));
+        return;
+    }
+
+    if (bank === BANK_ECHO) {
+        if (knobIndex === 0) {
+            const nextIdx = getDivisionIndex(echoDivisionValue) + (delta > 0 ? 1 : delta < 0 ? -1 : 0);
+            echoDivisionValue = getDivisionValue(nextIdx);
+            sendParam('echo_division', echoDivisionValue.toFixed(3));
+            showOverlay('Echo', 'Time', getDivisionLabel(echoDivisionValue));
             return;
         }
-        const slot = lastTouchedSlot;
-        const pi = knobIndex - 3;
-        let v = slotParams[slot][pi] + delta * 0.01;
-        v = Math.max(0.0, Math.min(1.0, v));
-        slotParams[slot][pi] = v;
-        sendParam(`punch_${slot}_param_${pi}`, v.toFixed(3));
-        showOverlay(FX_NAMES[slot], SLOT_PARAM_NAMES[slot][pi], v.toFixed(2));
+        if (knobIndex === 1) {
+            setGroupedSlotParam(ECHO_SLOTS, 0, nudgeValue(slotParams[ECHO_SLOTS[0]][0], delta), 'Echo', 'Feedback');
+            return;
+        }
+        if (knobIndex === 2) {
+            setGroupedSlotParam(ECHO_SLOTS, 1, nudgeValue(slotParams[ECHO_SLOTS[0]][1], delta), 'Echo', 'Tone');
+            return;
+        }
+        if (knobIndex === 3) {
+            setGroupedSlotParam(ECHO_SLOTS, 2, nudgeValue(slotParams[ECHO_SLOTS[0]][2], delta), 'Echo', 'Volume');
+            return;
+        }
+        if (knobIndex === 4) {
+            const next = nudgeValue(tiltEqValue, delta);
+            tiltEqValue = next;
+            sendParam('tilt_eq', next.toFixed(3));
+            showOverlay('Echo', 'Warmth', next.toFixed(2));
+            return;
+        }
+        if (knobIndex === 5) {
+            dryWetValue = nudgeValue(dryWetValue, delta);
+            sendParam('dry_wet', dryWetValue.toFixed(3));
+            showOverlay('Echo', 'Dry/Wet', dryWetValue.toFixed(2));
+            return;
+        }
+    } else if (bank === BANK_REVERB) {
+        if (knobIndex === 0) {
+            setGroupedSlotParam(REVERB_SLOTS, 0, nudgeValue(slotParams[REVERB_SLOTS[0]][0], delta), 'Reverb', 'Decay');
+            return;
+        }
+        if (knobIndex === 1) {
+            setGroupedSlotParam(REVERB_SLOTS, 1, nudgeValue(slotParams[REVERB_SLOTS[0]][1], delta), 'Reverb', 'Tone');
+            return;
+        }
+        if (knobIndex === 2) {
+            setGroupedSlotParam(REVERB_SLOTS, 2, nudgeValue(slotParams[REVERB_SLOTS[0]][2], delta), 'Reverb', 'Volume');
+            return;
+        }
+        if (knobIndex === 7) {
+            filterCutoffValue = nudgeValue(filterCutoffValue, delta);
+            sendParam('dj_filter', filterCutoffValue.toFixed(3));
+            showOverlay('Filter', filterMode === 0 ? 'LPF Cutoff' : 'HPF Cutoff', filterCutoffValue.toFixed(2));
+            return;
+        }
+    } else if (bank === BANK_SIREN) {
+        if (knobIndex === 0) {
+            setGroupedSlotParam(SIREN_PAD_SLOTS.map(getEngineSlotForPad).filter(s => s >= 0), 0, nudgeValue(slotParams[24][0], delta), 'Siren', 'Tone');
+            return;
+        }
+        if (knobIndex === 1) {
+            setGroupedSlotParam(SIREN_PAD_SLOTS.map(getEngineSlotForPad).filter(s => s >= 0), 1, nudgeValue(slotParams[24][1], delta), 'Siren', 'Drive');
+            return;
+        }
+        if (knobIndex === 2) {
+            setGroupedSlotParam(SIREN_PAD_SLOTS.map(getEngineSlotForPad).filter(s => s >= 0), 2, nudgeValue(slotParams[24][2], delta), 'Siren', 'Volume');
+            return;
+        }
+        if (knobIndex === 7) {
+            filterCutoffValue = nudgeValue(filterCutoffValue, delta);
+            sendParam('dj_filter', filterCutoffValue.toFixed(3));
+            showOverlay('Filter', filterMode === 0 ? 'LPF Cutoff' : 'HPF Cutoff', filterCutoffValue.toFixed(2));
+            return;
+        }
+    }
+
+    if (knobIndex === 4) {
+        dryWetValue = nudgeValue(dryWetValue, delta);
+        sendParam('dry_wet', dryWetValue.toFixed(3));
+        showOverlay('Mix', 'Master', dryWetValue.toFixed(2));
+    } else if (knobIndex === 5) {
+        setGroupedSlotParam(ECHO_SLOTS, 2, nudgeValue(slotParams[ECHO_SLOTS[0]][2], delta), 'Mix', 'Echo Send');
     } else if (knobIndex === 6) {
-        /* E7: Tilt EQ */
-        let v = globalValues[3] + delta * 0.01;
-        v = Math.max(0.0, Math.min(1.0, v));
-        globalValues[3] = v;
-        sendParam('tilt_eq', v.toFixed(3));
-        showOverlay('Global', 'Tilt', v.toFixed(2));
+        setGroupedSlotParam(REVERB_SLOTS, 2, nudgeValue(slotParams[REVERB_SLOTS[0]][2], delta), 'Mix', 'Verb Send');
     } else if (knobIndex === 7) {
-        /* E8: DJ Filter */
-        let v = globalValues[4] + delta * 0.01;
-        v = Math.max(0.0, Math.min(1.0, v));
-        globalValues[4] = v;
-        sendParam('dj_filter', v.toFixed(3));
-        showOverlay('Global', 'DJ Flt', v.toFixed(2));
+        filterCutoffValue = nudgeValue(filterCutoffValue, delta);
+        sendParam('dj_filter', filterCutoffValue.toFixed(3));
+        showOverlay('Filter', filterMode === 0 ? 'LPF Cutoff' : 'HPF Cutoff', filterCutoffValue.toFixed(2));
     }
 }
 
@@ -797,38 +1154,102 @@ function handleKnobPeek(knobNote) {
     if (knobNote === 9) return;
     if (knobNote === 8) return; /* Master knob = volume passthrough, no peek */
 
-    if (knobNote === 0) {
-        /* E1: RPT Length */
-        const timeLabel = getTimeLabel(globalValues[0]);
-        showOverlay('Repeat', `Length: ${timeLabel}`, globalValues[0].toFixed(2));
-    } else if (knobNote === 1) {
-        /* E2: RPT Speed */
-        showOverlay('Repeat', 'Speed', globalValues[1].toFixed(2));
-    } else if (knobNote === 2) {
-        /* E3: RPT on/off */
-        const rptActive = fxActive[lastRepeatSlot] || fxLatched[lastRepeatSlot];
-        showOverlay(FX_NAMES[lastRepeatSlot], rptActive ? 'Loop ON' : 'Loop OFF', rptActive ? '1.00' : '0.00');
-    } else if (knobNote >= 3 && knobNote <= 5) {
-        /* E4-E6: per-slot params */
-        const pi = knobNote - 3;
-        if (lastTouchedSlot >= 0 && lastTouchedSlot < NUM_SLOTS) {
-            const slot = lastTouchedSlot;
-            showOverlay(FX_NAMES[slot], SLOT_PARAM_NAMES[slot][pi],
-                       slotParams[slot][pi].toFixed(2));
-        } else {
-            showOverlay('No FX', 'Tap a pad first', '');
+    const bank = heldFxBank >= 0 ? heldFxBank : BANK_MIX;
+
+    if (bank === BANK_MIX && knobNote >= 0 && knobNote <= 3) {
+        showOverlay('Mix', ISO_LABELS[knobNote], isoValues[knobNote].toFixed(2));
+        return;
+    }
+    if (bank === BANK_ECHO) {
+        if (knobNote === 0) {
+            showOverlay('Echo', 'Time', getDivisionLabel(echoDivisionValue));
+            return;
         }
+        if (knobNote === 1) {
+            showOverlay('Echo', 'Feedback', slotParams[ECHO_SLOTS[0]][0].toFixed(2));
+            return;
+        }
+        if (knobNote === 2) {
+            showOverlay('Echo', 'Tone', slotParams[ECHO_SLOTS[0]][1].toFixed(2));
+            return;
+        }
+        if (knobNote === 3) {
+            showOverlay('Echo', 'Volume', slotParams[ECHO_SLOTS[0]][2].toFixed(2));
+            return;
+        }
+        if (knobNote === 4) {
+            showOverlay('Echo', 'Warmth', tiltEqValue.toFixed(2));
+            return;
+        }
+        if (knobNote === 5) {
+            showOverlay('Echo', 'Dry/Wet', dryWetValue.toFixed(2));
+            return;
+        }
+    }
+    if (bank === BANK_REVERB) {
+        if (knobNote === 0) {
+            showOverlay('Reverb', 'Decay', slotParams[REVERB_SLOTS[0]][0].toFixed(2));
+            return;
+        }
+        if (knobNote === 1) {
+            showOverlay('Reverb', 'Tone', slotParams[REVERB_SLOTS[0]][1].toFixed(2));
+            return;
+        }
+        if (knobNote === 2) {
+            showOverlay('Reverb', 'Volume', slotParams[REVERB_SLOTS[0]][2].toFixed(2));
+            return;
+        }
+    }
+    if (bank === BANK_SIREN) {
+        if (knobNote === 0) {
+            showOverlay('Siren', 'Tone', slotParams[24][0].toFixed(2));
+            return;
+        }
+        if (knobNote === 1) {
+            showOverlay('Siren', 'Drive', slotParams[24][1].toFixed(2));
+            return;
+        }
+        if (knobNote === 2) {
+            showOverlay('Siren', 'Volume', slotParams[24][2].toFixed(2));
+            return;
+        }
+    }
+
+    if (knobNote === 4) {
+        showOverlay('Mix', 'Master', dryWetValue.toFixed(2));
+    } else if (knobNote === 5) {
+        showOverlay('Mix', 'Echo Send', slotParams[ECHO_SLOTS[0]][2].toFixed(2));
     } else if (knobNote === 6) {
-        /* E7: Tilt EQ */
-        showOverlay('Global', 'Tilt', globalValues[3].toFixed(2));
+        showOverlay('Mix', 'Verb Send', slotParams[REVERB_SLOTS[0]][2].toFixed(2));
     } else if (knobNote === 7) {
-        /* E8: DJ Filter */
-        showOverlay('Global', 'DJ Flt', globalValues[4].toFixed(2));
+        showOverlay('Filter', filterMode === 0 ? 'LPF Cutoff' : 'HPF Cutoff', filterCutoffValue.toFixed(2));
     }
 }
 
 function handleTrackButton(trackIdx, pressed) {
-    /* Track buttons unused — always Move Mix */
+    if (trackIdx >= 0 && trackIdx <= 3) {
+        if (shiftHeld) {
+            if (pressed) {
+                toggleIsoKill(trackIdx);
+            }
+        } else {
+            const bank = TRACK_BANKS[trackIdx];
+            if (bank === BANK_MIX) {
+                if (pressed) {
+                    heldFxBank = -1;
+                    activeBank = BANK_MIX;
+                    refreshButtonLEDs();
+                    showOverlay('Hold FX', 'MIX', '');
+                }
+            } else {
+                heldFxBank = pressed ? bank : -1;
+                activeBank = heldFxBank >= 0 ? heldFxBank : BANK_MIX;
+                refreshButtonLEDs();
+                showOverlay('Hold FX', pressed ? BANK_NAMES[bank] : 'MIX', '');
+            }
+        }
+        return;
+    }
 }
 
 function handleJogScroll(delta) {
@@ -844,7 +1265,8 @@ function syncFxState() {
         if (activeStr) {
             const active = JSON.parse(activeStr);
             for (let i = 0; i < NUM_SLOTS; i++) {
-                fxActive[i] = active[i] === 1;
+                const engineSlot = getEngineSlotForPad(i);
+                fxActive[i] = engineSlot >= 0 ? active[engineSlot] === 1 : false;
             }
         }
     } catch (e) { /* ignore */ }
@@ -854,7 +1276,8 @@ function syncFxState() {
         if (latchedStr) {
             const latched = JSON.parse(latchedStr);
             for (let i = 0; i < NUM_SLOTS; i++) {
-                fxLatched[i] = latched[i] === 1;
+                const engineSlot = getEngineSlotForPad(i);
+                fxLatched[i] = engineSlot >= 0 ? latched[engineSlot] === 1 : false;
             }
         }
     } catch (e) { /* ignore */ }
@@ -867,15 +1290,21 @@ function syncFxState() {
  * ================================================================ */
 
 globalThis.init = function() {
-    console.log('Performance FX v2 module initializing');
+    console.log('Dub FX v0 module initializing');
 
     /* State persistence disabled — always start fresh */
     sendParam('bpm', String(bpm));
     sendParam('audio_source', '1');
-    for (let i = 0; i < NUM_GLOBALS; i++) {
-        if (GLOBAL_KEYS[i] === 'rpt_toggle') continue;
-        sendParam(GLOBAL_KEYS[i], GLOBAL_DEFAULTS[i].toFixed(3));
-    }
+    sendParam('dry_wet', dryWetValue.toFixed(3));
+    sendParam('high_eq', isoValues[0].toFixed(3));
+    sendParam('mid_eq', isoValues[1].toFixed(3));
+    sendParam('low_eq', isoValues[2].toFixed(3));
+    sendParam('sub_eq', isoValues[3].toFixed(3));
+    sendParam('filter_mode', String(filterMode));
+    sendParam('echo_division', echoDivisionValue.toFixed(3));
+    sendParam('repeat_speed', repeatSpeedValue.toFixed(3));
+    sendParam('tilt_eq', tiltEqValue.toFixed(3));
+    sendParam('dj_filter', filterCutoffValue.toFixed(3));
 
     ledInitPending = true;
     ledInitIndex = 0;
@@ -890,6 +1319,12 @@ globalThis.tick = function() {
     /* Drain queued params (pressure, knob values, etc.) */
     drainParamQueue();
 
+    syncCounter++;
+    if (syncCounter >= 8) {
+        syncCounter = 0;
+        syncFxState();
+    }
+
     /* Autosave */
     autosaveCounter++;
     if (autosaveCounter >= AUTOSAVE_INTERVAL) {
@@ -898,7 +1333,9 @@ globalThis.tick = function() {
     }
 
     /* Render display */
-    if (overlayTimer > 0) {
+    if (sirenAssignMode) {
+        drawFileBrowser();
+    } else if (overlayTimer > 0) {
         drawOverlay();
     } else {
         drawMainView();
@@ -932,8 +1369,10 @@ globalThis.onMidiMessageInternal = function(data) {
         const now = Date.now();
         for (let i = 0; i < NUM_SLOTS; i++) {
             if (fxActive[i] && now - lastPressureTime[i] >= PRESSURE_THROTTLE_MS) {
+                const engineSlot = getEngineSlotForPad(i);
+                if (engineSlot < 0) continue;
                 lastPressureTime[i] = now;
-                sendParam(`punch_${i}_pressure`, (d1 / 127.0).toFixed(3));
+                sendParam(`punch_${engineSlot}_pressure`, (d1 / 127.0).toFixed(3));
             }
         }
         return;
@@ -971,35 +1410,18 @@ globalThis.onMidiMessageInternal = function(data) {
         /* Shift */
         if (d1 === MoveShift) {
             shiftHeld = d2 > 0;
-            /* Shift pressed while holding pads → latch/unlatch them */
-            if (shiftHeld) {
-                for (let i = 0; i < NUM_SLOTS; i++) {
-                    if (fxHeld[i]) {
-                        if (fxLatched[i]) {
-                            /* Already latched: unlatch (will release on pad-off) */
-                            fxLatched[i] = false;
-                            sendParam(`punch_${i}_latch`, '0');
-                            showOverlay(FX_NAMES[i], 'Unlatched', '');
-                        } else {
-                            /* Not latched: latch it */
-                            fxLatched[i] = true;
-                            sendParam(`punch_${i}_latch`, '1');
-                            showOverlay(FX_NAMES[i], 'Latched', '');
-                        }
-                        refreshPadLED(i);
-                    }
-                }
-            }
+            refreshButtonLEDs();
             return;
         }
 
-        /* Back - CLEAN EXIT */
+        /* Back - exit file browser or clean exit */
         if (d1 === MoveBack && d2 > 0) {
-            saveState();
-            for (let i = 0; i < NUM_SLOTS; i++) {
-                sendParam(`punch_${i}_off`, '1');
-                sendParam(`punch_${i}_latch`, '0');
+            if (sirenAssignMode) {
+                exitSirenAssignMode();
+                return;
             }
+            saveState();
+            deactivateAllSlots();
             sendParam('bypass', '1');
             host_exit_module();
             return;
@@ -1013,19 +1435,19 @@ globalThis.onMidiMessageInternal = function(data) {
                 if (!bypassed) {
                     bypassed = true;
                     sendParam('bypass', '1');
-                    setButtonLED(MoveUndo, WhiteLedBright);
+                    refreshButtonLEDs();
                     showOverlay('FX', 'BYPASSED', '');
                 } else {
                     bypassed = false;
                     sendParam('bypass', '0');
-                    setButtonLED(MoveUndo, WhiteLedDim);
+                    refreshButtonLEDs();
                     showOverlay('FX', 'ACTIVE', '');
                 }
             } else {
                 if (undoHeld && bypassed && !undoWasBypassed) {
                     bypassed = false;
                     sendParam('bypass', '0');
-                    setButtonLED(MoveUndo, WhiteLedDim);
+                    refreshButtonLEDs();
                 }
                 undoHeld = false;
             }
@@ -1034,12 +1456,44 @@ globalThis.onMidiMessageInternal = function(data) {
 
         /* Copy - unused */
         if (d1 === MoveCopy && d2 > 0) {
+            deactivateAllSlots();
+            showOverlay('Dub FX', 'All FX Off', '');
+            return;
+        }
+
+        /* Loop button toggles global filter mode */
+        if (d1 === MoveLoop && d2 > 0) {
+            filterMode = filterMode ? 0 : 1;
+            sendParam('filter_mode', String(filterMode));
+            refreshButtonLEDs();
+            showOverlay('Filter', filterMode === 0 ? 'LPF Mode' : 'HPF Mode', '');
+            return;
+        }
+
+        /* Capture + Shift = reload sirens from sirens_dir */
+        if (d1 === MoveCapture && d2 > 0 && shiftHeld) {
+            sendParam('reload_sirens', '1');
+            showOverlay('Sirens', 'Reloading...', '');
+            return;
+        }
+
+        /* Delete - panic reset */
+        if (d1 === MoveDelete && d2 > 0) {
+            deactivateAllSlots();
+            bypassed = false;
+            sendParam('bypass', '0');
+            refreshButtonLEDs();
+            showOverlay('Dub FX', 'Panic Reset', '');
             return;
         }
 
         /* Jog wheel turn */
         if (d1 === MoveMainKnob) {
             const delta = decodeDelta(d2);
+            if (sirenAssignMode) {
+                sirenAssignIdx = Math.max(0, Math.min(sirenAssignFiles.length - 1, sirenAssignIdx + delta));
+                return;
+            }
             if (shiftHeld) {
                 /* Shift+Turn = BPM fine */
                 bpm = Math.max(20, Math.min(300, bpm + delta * 0.5));
@@ -1054,6 +1508,16 @@ globalThis.onMidiMessageInternal = function(data) {
 
         /* Jog click */
         if (d1 === MoveMainButton && d2 > 0) {
+            if (sirenAssignMode) {
+                if (sirenAssignFiles.length > 0) {
+                    const n = sirenAssignPadSlot - 24;
+                    const filename = sirenAssignFiles[sirenAssignIdx];
+                    sendParam(`siren_assign_${n}`, filename);
+                    showOverlay(`PAD ${n + 1}`, filename.replace(/\.wav$/i, ''), '');
+                }
+                exitSirenAssignMode();
+                return;
+            }
             if (shiftHeld) {
                 /* Shift+Click = unused */
             } else {
@@ -1084,5 +1548,85 @@ globalThis.onMidiMessageInternal = function(data) {
 };
 
 globalThis.onMidiMessageExternal = function(data) {
-    /* Pass external MIDI through for potential future use */
+    const status = data[0] & 0xF0;
+    const d1 = data[1];
+    const d2 = data[2];
+    if (status !== 0xB0) return;
+
+    for (let row = 0; row < MIDIMIX_KNOB_ROWS.length; row++) {
+        const strip = MIDIMIX_KNOB_ROWS[row].indexOf(d1);
+        if (strip >= 0) {
+            const slot = MIDIMIX_SPACE_SLOTS[strip];
+            setSpaceSlotParam(slot, row, d2 / 127.0);
+            return;
+        }
+    }
+
+    for (let i = 0; i < MIDIMIX_FADERS.length; i++) {
+        if (d1 !== MIDIMIX_FADERS[i]) continue;
+        const value = d2 / 127.0;
+        if (i <= 3) {
+            setIsoBand(i, value);
+            showOverlay('Isolator', ISO_LABELS[i], value.toFixed(2));
+        } else if (i === 4) {
+            dryWetValue = value;
+            sendParam('dry_wet', dryWetValue.toFixed(3));
+            showOverlay('Mix', 'Master', dryWetValue.toFixed(2));
+        } else if (i === 5) {
+            setGroupedSlotParam(ECHO_SLOTS, 2, value, 'Mix', 'Echo Send');
+        } else if (i === 6) {
+            setGroupedSlotParam(REVERB_SLOTS, 2, value, 'Mix', 'Verb Send');
+        } else if (i === 7) {
+            filterCutoffValue = value;
+            sendParam('dj_filter', value.toFixed(3));
+            showOverlay('Filter', filterMode === 0 ? 'LPF Cutoff' : 'HPF Cutoff', value.toFixed(2));
+        }
+        return;
+    }
+
+    if (d1 === MIDIMIX_MASTER) {
+        dryWetValue = d2 / 127.0;
+        sendParam('dry_wet', dryWetValue.toFixed(3));
+        showOverlay('Mix', 'Master', dryWetValue.toFixed(2));
+        return;
+    }
+
+    for (let i = 0; i < MIDIMIX_REC.length; i++) {
+        if (d1 !== MIDIMIX_REC[i]) continue;
+        const slot = MIDIMIX_SPACE_SLOTS[i];
+        if (d2 > 0) {
+            fxActive[slot] = true;
+            lastTouchedSlot = slot;
+            sendParam(`punch_${slot}_on`, '0.700');
+        } else if (!fxLatched[slot]) {
+            deactivateSlot(slot);
+        }
+        refreshPadLED(slot);
+        return;
+    }
+
+    for (let i = 0; i < MIDIMIX_MUTE.length; i++) {
+        if (d1 === MIDIMIX_MUTE[i] && d2 > 0) {
+            const slot = MIDIMIX_SPACE_SLOTS[i];
+            setLatchedSlot(slot, !fxLatched[slot]);
+            return;
+        }
+    }
+
+    for (let i = 0; i < MIDIMIX_SOLO.length; i++) {
+        if (d1 !== MIDIMIX_SOLO[i] || d2 <= 0) continue;
+        if (i <= 3) {
+            toggleIsoKill(i);
+        } else if (i === 4) {
+            bypassed = !bypassed;
+            sendParam('bypass', bypassed ? '1' : '0');
+            refreshButtonLEDs();
+            showOverlay('Mix', bypassed ? 'Bypassed' : 'Active', '');
+        } else {
+            const filterSlots = [8, 9, 10, 15];
+            const slot = filterSlots[i - 5];
+            setLatchedSlot(slot, !fxLatched[slot]);
+        }
+        return;
+    }
 };

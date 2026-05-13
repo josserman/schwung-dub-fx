@@ -211,8 +211,10 @@ static void test_activate_distort(void) {
     ASSERT_EQ_INT(e.slots[FX_BITCRUSH].active, 1, "bitcrush active");
     ASSERT_NEAR(e.slots[FX_BITCRUSH].velocity, 0.6f, 0.01f, "velocity");
 
+    /* Siren slots are one-shot: deactivate is a no-op, slot plays to end */
     pfx_deactivate(&e, FX_BITCRUSH);
-    ASSERT_EQ_INT(e.slots[FX_BITCRUSH].fading_out, 1, "fading out");
+    ASSERT_EQ_INT(e.slots[FX_BITCRUSH].fading_out, 0, "one-shot: no fade");
+    ASSERT_EQ_INT(e.slots[FX_BITCRUSH].active, 1, "one-shot: still active");
 
     pfx_engine_destroy(&e);
     PASS();

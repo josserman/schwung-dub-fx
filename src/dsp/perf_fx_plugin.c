@@ -33,17 +33,17 @@ static audio_fx_api_v2_t g_fx_api;
 /* FX names for all 32 slots */
 static const char *FX_NAMES[PFX_NUM_FX] = {
     /* Row 4: Time/Repeat (slots 0-7) */
-    "RPT 1/4", "RPT 1/8", "RPT 1/16", "RPT Trip",
-    "Stutter", "Scatter", "Reverse", "Timestretch",
+    "Dub 1/4", "Dub 1/8", "Dub 1/16", "Dub Trip",
+    "Stutter", "Scatter", "Reverse", "Tape Stop",
     /* Row 3: Filter Sweeps (slots 8-15) */
-    "LP Sweep", "HP Sweep", "BP Rise", "BP Fall",
-    "Reso Sweep", "Phaser", "Flanger", "Auto Filter",
+    "LP Dub", "HP Dub", "Siren Up", "Siren Down",
+    "Reso Sweep", "Phaser", "Flanger", "Auto Siren",
     /* Row 2: Space Throws (slots 16-23) */
-    "Delay 1/4", "Delay D8", "PingPong 1/4", "PingPong D8",
-    "Room", "Hall", "Dark Verb", "Spring",
+    "Tape 1/4", "Tape D8", "Ping 1/4", "Ping D8",
+    "Room", "Hall", "Dub Verb", "Spring",
     /* Row 1: Distortion & Rhythm (slots 24-31) */
-    "Bitcrush", "Downsample", "Saturate", "Gate/Duck",
-    "Tremolo", "Octave Down", "Vinyl Sim", "Vinyl Brake"
+    "Bitcrush", "Downsample", "Drive", "Duck",
+    "Tremolo", "Sub Dub", "Vinyl", "Brake"
 };
 
 /* Per-FX param names (4 params each, mapped to E1-E4) */
@@ -133,6 +133,14 @@ static void *fx_create(const char *module_dir, const char *config_json) {
         log_msg("pfx: vinyl crackle: %s (%d samples)",
                 inst->engine.vinyl_crackle_buf ? "loaded" : "not found",
                 inst->engine.vinyl_crackle_len);
+
+        snprintf(inst->engine.sirens_dir, sizeof(inst->engine.sirens_dir),
+                 "%s/sirens", module_dir);
+        pfx_engine_reload_sirens(&inst->engine);
+        for (int i = 0; i < 8; i++) {
+            log_msg("pfx: siren %d: %s", i + 1,
+                    inst->engine.slots[FX_BITCRUSH + i].sample.buf ? "loaded" : "not found");
+        }
     }
 
     log_msg("pfx: Performance FX v2 engine initialized (32 unified FX)");
@@ -209,8 +217,43 @@ static void fx_set_param(void *instance, const char *key, const char *val) {
     if (strcmp(key, "dj_filter") == 0) { e->dj_filter = clampf(fval, 0, 1); return; }
     if (strcmp(key, "tilt_eq") == 0) { e->tilt_eq = clampf(fval, 0, 1); return; }
     if (strcmp(key, "dry_wet") == 0) { e->dry_wet = clampf(fval, 0, 1); return; }
+    if (strcmp(key, "filter_mode") == 0) { e->filter_mode = ival ? 1 : 0; return; }
+    if (strcmp(key, "low_eq") == 0) { e->low_eq = clampf(fval, 0, 1); return; }
+    if (strcmp(key, "mid_eq") == 0) { e->mid_eq = clampf(fval, 0, 1); return; }
+    if (strcmp(key, "high_eq") == 0) { e->high_eq = clampf(fval, 0, 1); return; }
+    if (strcmp(key, "sub_eq") == 0) { e->sub_eq = clampf(fval, 0, 1); return; }
     if (strcmp(key, "repeat_rate") == 0) { e->repeat_rate = clampf(fval, 0, 1); return; }
     if (strcmp(key, "repeat_speed") == 0) { e->repeat_speed = clampf(fval, 0, 1); return; }
+    if (strcmp(key, "echo_division") == 0) { e->echo_division = clampf(fval, 0, 1); return; }
+
+    /* Siren hot-reload */
+    if (strcmp(key, "reload_sirens") == 0) {
+        pfx_engine_reload_sirens(e);
+        return;
+    }
+    if (strcmp(key, "siren_dir") == 0) {
+        snprintf(e->sirens_dir, sizeof(e->sirens_dir), "%s", val);
+        pfx_engine_reload_sirens(e);
+        return;
+    }
+    if (strncmp(key, "siren_path_", 11) == 0) {
+        int n = atoi(key + 11);
+        if (n >= 1 && n <= 8)
+            pfx_engine_load_sample_into_slot(e, FX_BITCRUSH + (n - 1), val);
+        return;
+    }
+    /* Assign a file (basename) from sirens_dir to a siren slot (0-indexed) */
+    if (strncmp(key, "siren_assign_", 13) == 0) {
+        int n = atoi(key + 13);
+        if (n >= 0 && n < 8 && e->sirens_dir[0]) {
+            char path[512];
+            snprintf(path, sizeof(path), "%s/%s", e->sirens_dir, val);
+            pfx_engine_load_sample_into_slot(e, FX_BITCRUSH + n, path);
+            strncpy(e->siren_file_names[n], val, 255);
+            e->siren_file_names[n][255] = '\0';
+        }
+        return;
+    }
 
     /* Engine params */
     if (strcmp(key, "bpm") == 0) { e->bpm = clampf(fval, 20, 300); return; }
@@ -263,8 +306,14 @@ static int fx_get_param(void *instance, const char *key, char *buf, int buf_len)
     if (strcmp(key, "dj_filter") == 0) return snprintf(buf, buf_len, "%.3f", e->dj_filter);
     if (strcmp(key, "tilt_eq") == 0) return snprintf(buf, buf_len, "%.3f", e->tilt_eq);
     if (strcmp(key, "dry_wet") == 0) return snprintf(buf, buf_len, "%.3f", e->dry_wet);
+    if (strcmp(key, "filter_mode") == 0) return snprintf(buf, buf_len, "%d", e->filter_mode);
+    if (strcmp(key, "low_eq") == 0) return snprintf(buf, buf_len, "%.3f", e->low_eq);
+    if (strcmp(key, "mid_eq") == 0) return snprintf(buf, buf_len, "%.3f", e->mid_eq);
+    if (strcmp(key, "high_eq") == 0) return snprintf(buf, buf_len, "%.3f", e->high_eq);
+    if (strcmp(key, "sub_eq") == 0) return snprintf(buf, buf_len, "%.3f", e->sub_eq);
     if (strcmp(key, "repeat_rate") == 0) return snprintf(buf, buf_len, "%.3f", e->repeat_rate);
     if (strcmp(key, "repeat_speed") == 0) return snprintf(buf, buf_len, "%.3f", e->repeat_speed);
+    if (strcmp(key, "echo_division") == 0) return snprintf(buf, buf_len, "%.3f", e->echo_division);
     if (strcmp(key, "bpm") == 0) return snprintf(buf, buf_len, "%.1f", e->bpm);
     if (strcmp(key, "bypass") == 0) return snprintf(buf, buf_len, "%d", e->bypassed);
     if (strcmp(key, "pressure_curve") == 0) return snprintf(buf, buf_len, "%d", e->pressure_curve);
@@ -326,6 +375,10 @@ static int fx_get_param(void *instance, const char *key, char *buf, int buf_len)
     /* Full state */
     if (strcmp(key, "state") == 0)
         return pfx_serialize_state(e, buf, buf_len);
+
+    /* Siren filenames: all .wav files in sirens_dir, newline-separated */
+    if (strcmp(key, "siren_names") == 0)
+        return pfx_get_siren_names_from_dir(e, buf, buf_len);
 
     return -1;
 }

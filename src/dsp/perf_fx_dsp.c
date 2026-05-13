@@ -6,13 +6,14 @@
  */
 
 #include "perf_fx_dsp.h"
-#include "pfx_bungee.h"
 #include "pfx_revsc.h"
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdarg.h>
+#include <dirent.h>
+#include <ctype.h>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -62,6 +63,8 @@ static inline float flush_denormal(float x) {
     union { float f; uint32_t u; } v = { .f = x };
     return (v.u & 0x7F800000) == 0 ? 0.0f : x;
 }
+
+static void process_tape_stop(pfx_slot_t *s, float *l, float *r);
 
 static void engine_log(perf_fx_engine_t *e, const char *fmt, ...) {
     if (!e || !e->log_fn) return;
@@ -121,6 +124,14 @@ int pfx_bpm_to_samples(float bpm, float division) {
     if (bpm < 20.0f) bpm = 120.0f;
     float beat_samples = (60.0f / bpm) * PFX_SAMPLE_RATE;
     return (int)(beat_samples * division);
+}
+
+static float pfx_echo_division_multiplier(float division01) {
+    static const float mults[] = { 4.0f, 2.0f, 1.0f, 0.5f, 0.25f, 0.125f };
+    int idx = (int)floorf(clampf(division01, 0.0f, 0.999f) * 6.0f);
+    if (idx < 0) idx = 0;
+    if (idx > 5) idx = 5;
+    return mults[idx];
 }
 
 /* ============================================================
@@ -231,8 +242,14 @@ void pfx_engine_init(perf_fx_engine_t *e) {
     e->dj_filter = 0.5f;
     e->tilt_eq = 0.5f;
     e->dry_wet = 1.0f;
+    e->filter_mode = 0;
+    e->low_eq = 1.0f;
+    e->mid_eq = 1.0f;
+    e->high_eq = 1.0f;
+    e->sub_eq = 1.0f;
     e->repeat_rate = 0.5f;
     e->repeat_speed = 0.5f;
+    e->echo_division = 0.4f;
     e->bpm = 120.0f;
     e->pressure_curve = PRESSURE_EXPONENTIAL;
     e->audio_source = SOURCE_MOVE_MIX;
@@ -305,9 +322,6 @@ void pfx_engine_init(perf_fx_engine_t *e) {
                 s->tape.buf_len = PFX_REPEAT_BUF;
                 s->tape.speed = 1.0f;
             }
-            if (i == FX_PITCH_DOWN) {
-                s->bungee = pfx_bungee_create(PFX_SAMPLE_RATE);
-            }
         }
     }
 
@@ -331,27 +345,28 @@ void pfx_engine_destroy(perf_fx_engine_t *e) {
         free(s->mod_delay.buf_l);
         free(s->mod_delay.buf_r);
         s->mod_delay.buf_l = s->mod_delay.buf_r = NULL;
-        if (s->bungee) {
-            pfx_bungee_destroy((pfx_bungee_t *)s->bungee);
-            s->bungee = NULL;
-        }
         /* Free revsc reverb instances */
         free(s->ext_instance);
         s->ext_instance = NULL;
+        free(s->sample.buf);
+        s->sample.buf = NULL;
+        s->sample.length = 0;
+        s->sample.pos = 0;
+        s->sample.playing = 0;
     }
 }
 
 /* Simple WAV loader — reads mono/stereo 16-bit PCM WAV into a mono int16 buffer.
  * Properly skips non-data chunks (LIST, INFO, etc.) to find the 'data' chunk. */
-void pfx_engine_load_vinyl_crackle(perf_fx_engine_t *e, const char *wav_path) {
+static int16_t *pfx_load_wav_mono(const char *wav_path, int *frames_out) {
     FILE *f = fopen(wav_path, "rb");
-    if (!f) return;
+    if (!f) return NULL;
 
     /* Read RIFF header (12 bytes) */
     uint8_t riff[12];
-    if (fread(riff, 1, 12, f) != 12) { fclose(f); return; }
-    if (riff[0] != 'R' || riff[1] != 'I' || riff[2] != 'F' || riff[3] != 'F') { fclose(f); return; }
-    if (riff[8] != 'W' || riff[9] != 'A' || riff[10] != 'V' || riff[11] != 'E') { fclose(f); return; }
+    if (fread(riff, 1, 12, f) != 12) { fclose(f); return NULL; }
+    if (riff[0] != 'R' || riff[1] != 'I' || riff[2] != 'F' || riff[3] != 'F') { fclose(f); return NULL; }
+    if (riff[8] != 'W' || riff[9] != 'A' || riff[10] != 'V' || riff[11] != 'E') { fclose(f); return NULL; }
 
     int channels = 0, bits = 0, data_size = 0;
     int found_fmt = 0, found_data = 0;
@@ -385,33 +400,149 @@ void pfx_engine_load_vinyl_crackle(perf_fx_engine_t *e, const char *wav_path) {
     }
 
     if (!found_fmt || !found_data || bits != 16 || channels < 1) {
-        fclose(f); return;
+        fclose(f); return NULL;
     }
 
     int total_samples = data_size / 2;
     int frames = total_samples / channels;
 
     int16_t *raw = (int16_t *)malloc(total_samples * sizeof(int16_t));
-    if (!raw) { fclose(f); return; }
+    if (!raw) { fclose(f); return NULL; }
     if ((int)fread(raw, sizeof(int16_t), total_samples, f) != total_samples) {
-        free(raw); fclose(f); return;
+        free(raw); fclose(f); return NULL;
     }
     fclose(f);
 
     /* Convert to mono if stereo */
-    e->vinyl_crackle_buf = (int16_t *)malloc(frames * sizeof(int16_t));
-    if (!e->vinyl_crackle_buf) { free(raw); return; }
+    int16_t *mono = (int16_t *)malloc(frames * sizeof(int16_t));
+    if (!mono) { free(raw); return NULL; }
 
     if (channels == 1) {
-        memcpy(e->vinyl_crackle_buf, raw, frames * sizeof(int16_t));
+        memcpy(mono, raw, frames * sizeof(int16_t));
     } else {
         for (int i = 0; i < frames; i++) {
-            e->vinyl_crackle_buf[i] = (int16_t)(((int)raw[i * channels] + (int)raw[i * channels + 1]) / 2);
+            mono[i] = (int16_t)(((int)raw[i * channels] + (int)raw[i * channels + 1]) / 2);
         }
     }
+    free(raw);
+    if (frames_out) *frames_out = frames;
+    return mono;
+}
+
+void pfx_engine_load_vinyl_crackle(perf_fx_engine_t *e, const char *wav_path) {
+    int frames = 0;
+    int16_t *mono = pfx_load_wav_mono(wav_path, &frames);
+    if (!mono) return;
+    free(e->vinyl_crackle_buf);
+    e->vinyl_crackle_buf = mono;
     e->vinyl_crackle_len = frames;
     e->vinyl_crackle_pos = 0;
-    free(raw);
+}
+
+void pfx_engine_load_sample_into_slot(perf_fx_engine_t *e, int slot, const char *wav_path) {
+    if (slot < 0 || slot >= PFX_NUM_FX) return;
+    int frames = 0;
+    int16_t *mono = pfx_load_wav_mono(wav_path, &frames);
+    if (!mono) return;
+    free(e->slots[slot].sample.buf);
+    e->slots[slot].sample.buf = mono;
+    e->slots[slot].sample.length = frames;
+    e->slots[slot].sample.pos = 0;
+    e->slots[slot].sample.playing = 0;
+}
+
+static int cmp_str(const void *a, const void *b) {
+    return strcmp(*(const char **)a, *(const char **)b);
+}
+
+void pfx_engine_reload_sirens(perf_fx_engine_t *e) {
+    if (!e->sirens_dir[0]) return;
+
+    /* Collect all .wav filenames in the directory, sort alphabetically */
+    DIR *dir = opendir(e->sirens_dir);
+    if (!dir) return;
+
+    char *names[64];
+    int count = 0;
+    struct dirent *ent;
+    while ((ent = readdir(dir)) != NULL && count < 64) {
+        const char *name = ent->d_name;
+        size_t len = strlen(name);
+        if (len < 5) continue;
+        const char *ext = name + len - 4;
+        if (ext[0] != '.' || (ext[1] != 'w' && ext[1] != 'W')) continue;
+        names[count] = strdup(name);
+        if (names[count]) count++;
+    }
+    closedir(dir);
+
+    if (count == 0) return;
+    qsort(names, count, sizeof(char *), cmp_str);
+
+    /* Load up to 8 into siren slots; record filenames in engine */
+    e->siren_file_count = 0;
+    memset(e->siren_file_names, 0, sizeof(e->siren_file_names));
+    int loaded = 0;
+    for (int i = 0; i < count && loaded < 8; i++) {
+        char path[512];
+        snprintf(path, sizeof(path), "%s/%s", e->sirens_dir, names[i]);
+        int frames = 0;
+        int16_t *mono = pfx_load_wav_mono(path, &frames);
+        if (!mono) { free(names[i]); continue; }
+        free(e->slots[FX_BITCRUSH + loaded].sample.buf);
+        e->slots[FX_BITCRUSH + loaded].sample.buf = mono;
+        e->slots[FX_BITCRUSH + loaded].sample.length = frames;
+        e->slots[FX_BITCRUSH + loaded].sample.pos = 0;
+        e->slots[FX_BITCRUSH + loaded].sample.playing = 0;
+        strncpy(e->siren_file_names[loaded], names[i], 255);
+        free(names[i]);
+        loaded++;
+    }
+    e->siren_file_count = loaded;
+    /* Free any remaining names */
+    for (int i = loaded; i < count; i++) free(names[i]);
+}
+
+/* Scan sirens_dir and return ALL .wav filenames (sorted), newline-separated.
+ * Unlike reload_sirens, this does not load audio — just lists what's available. */
+int pfx_get_siren_names_from_dir(perf_fx_engine_t *e, char *buf, int buf_len) {
+    if (buf_len > 0) buf[0] = '\0';
+    if (!e->sirens_dir[0]) return 0;
+    DIR *dir = opendir(e->sirens_dir);
+    if (!dir) return 0;
+
+    char *names[256];
+    int count = 0;
+    struct dirent *ent;
+    while ((ent = readdir(dir)) != NULL && count < 256) {
+        const char *name = ent->d_name;
+        size_t len = strlen(name);
+        if (len < 5) continue;
+        const char *ext = name + len - 4;
+        if (ext[0] != '.') continue;
+        if (tolower((unsigned char)ext[1]) != 'w') continue;
+        if (tolower((unsigned char)ext[2]) != 'a') continue;
+        if (tolower((unsigned char)ext[3]) != 'v') continue;
+        names[count] = strdup(name);
+        if (names[count]) count++;
+    }
+    closedir(dir);
+    if (count == 0) return 0;
+
+    qsort(names, count, sizeof(char *), cmp_str);
+
+    int n = 0;
+    for (int i = 0; i < count; i++) {
+        if (n > 0 && n < buf_len - 1) buf[n++] = '\n';
+        int rem = buf_len - n - 1;
+        if (rem > 0) {
+            int written = snprintf(buf + n, rem + 1, "%s", names[i]);
+            if (written > 0 && written <= rem) n += written;
+        }
+        free(names[i]);
+    }
+    if (n < buf_len) buf[n] = '\0';
+    return n;
 }
 
 void pfx_engine_reset(perf_fx_engine_t *e) {
@@ -443,6 +574,12 @@ void pfx_engine_reset(perf_fx_engine_t *e) {
     svf_reset(&e->tilt_lp_r);
     svf_reset(&e->tilt_hp_l);
     svf_reset(&e->tilt_hp_r);
+    svf_reset(&e->iso_sub_l);
+    svf_reset(&e->iso_sub_r);
+    svf_reset(&e->iso_low_l);
+    svf_reset(&e->iso_low_r);
+    svf_reset(&e->iso_high_l);
+    svf_reset(&e->iso_high_r);
 }
 
 /* ============================================================
@@ -462,7 +599,7 @@ void pfx_activate(perf_fx_engine_t *e, int slot, float velocity) {
     s->fading_out = 0;
     s->tail_active = 0;
     s->tail_silence_count = 0;
-    s->velocity = 0.5f;  /* temporary center until first aftertouch arrives */
+    s->velocity = velocity;
     s->pressure = 0.0f;  /* no pressure yet — aftertouch comes separately */
     s->phase = 0.0f;
 
@@ -533,25 +670,6 @@ void pfx_activate(perf_fx_engine_t *e, int slot, float velocity) {
             s->repeat.xfade_len = 128;
         }
 
-        /* Timestretch: create bungee stretcher and prime with capture audio */
-        if (slot == FX_HALF_SPEED) {
-            if (!s->bungee) {
-                s->bungee = pfx_bungee_create(PFX_SAMPLE_RATE);
-            }
-            pfx_bungee_set_speed((pfx_bungee_t *)s->bungee, 0.5f);
-            pfx_bungee_reset((pfx_bungee_t *)s->bungee);
-
-            /* Prime bungee with recent capture audio so it has data immediately */
-            int prime_len = PFX_SAMPLE_RATE; /* 1 second */
-            if (prime_len > e->capture_len) prime_len = e->capture_len;
-            float prime_lr[2];
-            for (int i = 0; i < prime_len; i++) {
-                int src = (e->capture_write_pos - prime_len + i + e->capture_len) % e->capture_len;
-                prime_lr[0] = e->capture_buf_l[src];
-                prime_lr[1] = e->capture_buf_r[src];
-                pfx_bungee_write((pfx_bungee_t *)s->bungee, prime_lr, 1);
-            }
-        }
     }
 
     if (FX_IS_FILTER(slot)) {
@@ -579,6 +697,10 @@ void pfx_activate(perf_fx_engine_t *e, int slot, float velocity) {
     }
 
     if (FX_IS_DISTORT(slot)) {
+        if (slot >= FX_BITCRUSH && slot <= FX_TAPE_STOP) {
+            s->sample.pos = 0;
+            s->sample.playing = (s->sample.buf && s->sample.length > 0) ? 1 : 0;
+        }
         if (slot == FX_TAPE_STOP) {
             if (s->tape.buf_l)
                 memset(s->tape.buf_l, 0, s->tape.buf_len * sizeof(float));
@@ -610,21 +732,6 @@ void pfx_activate(perf_fx_engine_t *e, int slot, float velocity) {
             svf_reset(&s->sat_filter_l);
             svf_reset(&s->sat_filter_r);
         }
-        if (slot == FX_PITCH_DOWN && s->bungee) {
-            pfx_bungee_set_speed((pfx_bungee_t *)s->bungee, 1.0f);
-            pfx_bungee_set_pitch((pfx_bungee_t *)s->bungee, 0.5f);
-            pfx_bungee_reset((pfx_bungee_t *)s->bungee);
-            /* Prime with capture audio so bungee has data immediately */
-            int prime_len = PFX_SAMPLE_RATE / 2;
-            if (prime_len > e->capture_len) prime_len = e->capture_len;
-            float prime_lr[2];
-            for (int i = 0; i < prime_len; i++) {
-                int src = (e->capture_write_pos - prime_len + i + e->capture_len) % e->capture_len;
-                prime_lr[0] = e->capture_buf_l[src];
-                prime_lr[1] = e->capture_buf_r[src];
-                pfx_bungee_write((pfx_bungee_t *)s->bungee, prime_lr, 1);
-            }
-        }
     }
 
     /* Set active LAST (belt-and-suspenders, even though set_param and
@@ -648,6 +755,11 @@ void pfx_deactivate(perf_fx_engine_t *e, int slot) {
         s->tail_active = 1;
         s->tail_silence_count = 0;
         s->pressure = 0.0f;
+        return;
+    }
+
+    /* Siren sample slots are one-shot triggers; release should not stop them. */
+    if (slot >= FX_BITCRUSH && slot <= FX_TAPE_STOP) {
         return;
     }
 
@@ -1032,33 +1144,10 @@ static void process_reverse(pfx_slot_t *s, float *l, float *r,
     }
 }
 
-/* Bungee timestretch: half speed without pitch change.
- * Called per-sample. Accumulates input into bungee, reads stretched output. */
 static void process_half_speed(pfx_slot_t *s, float *l, float *r,
                                 perf_fx_engine_t *e) {
     (void)e;
-    pfx_bungee_t *b = (pfx_bungee_t *)s->bungee;
-    if (!b) return;
-
-    /* Pressure: harder → slower (0.25x), neutral → 0.5x, lighter → 1.0x */
-    float pr = pressure_relative(s->pressure, s->velocity, s->settle_counter);
-    float speed;
-    if (pr < 0.5f) {
-        speed = 0.5f + pr;          /* 0.5 → 1.0 */
-    } else {
-        speed = 0.5f - (pr - 0.5f) * 0.5f;  /* 0.5 → 0.25 */
-    }
-    pfx_bungee_set_speed(b, speed);
-
-    /* Feed this sample to bungee */
-    float in_lr[2] = { *l, *r };
-    pfx_bungee_write(b, in_lr, 1);
-
-    /* Read one stretched sample */
-    float out_lr[2] = { 0.0f, 0.0f };
-    pfx_bungee_read(b, out_lr, 1);
-    *l = out_lr[0];
-    *r = out_lr[1];
+    process_tape_stop(s, l, r);
 }
 
 /* ============================================================
@@ -1302,67 +1391,82 @@ static void process_auto_filter(pfx_slot_t *s, float *l, float *r) {
 
 /* beat_mult: 1.0 = quarter note, 0.75 = dotted 8th */
 static void process_delay_throw(pfx_slot_t *s, float *l, float *r,
-                                 int feeding, float bpm, float beat_mult) {
+                                 int feeding, float bpm, float division01) {
     delay_t *d = &s->delay;
-    float filt = s->params[2];
+    float feedback = 0.1f + s->params[0] * 0.85f;
+    float bandpass = s->params[1];
+    float level = 0.1f + s->params[2] * 1.1f;
 
     float b = bpm < 20.0f ? 120.0f : bpm;
-    int delay_samples = (int)(60.0f / b * beat_mult * PFX_SAMPLE_RATE);
+    int delay_samples = (int)(60.0f / b * pfx_echo_division_multiplier(division01) * PFX_SAMPLE_RATE);
     if (delay_samples < 100) delay_samples = 100;
     if (delay_samples > PFX_SAMPLE_RATE) delay_samples = PFX_SAMPLE_RATE;
-
-    /* Pressure adds feedback, but cap at 0.5 for quick decay */
-    float pr = pressure_relative(s->pressure, s->velocity, s->settle_counter);
-    float fb = 0.2f + pr * 0.3f;  /* 0.2 → 0.5 */
 
     float dl, dr;
     delay_read(d, delay_samples, &dl, &dr);
 
-    float f_coeff = 0.1f + filt * 0.8f;
+    float f_coeff = 0.08f + bandpass * 0.75f;
     d->fb_lp_l += f_coeff * (dl - d->fb_lp_l);
     d->fb_lp_r += f_coeff * (dr - d->fb_lp_r);
 
-    if (feeding)
-        delay_write(d, *l + d->fb_lp_l * fb, *r + d->fb_lp_r * fb);
-    else
-        delay_write(d, d->fb_lp_l * fb, d->fb_lp_r * fb);
+    float wet_l = d->fb_lp_l;
+    float wet_r = d->fb_lp_r;
 
-    *l += dl * 0.7f;
-    *r += dr * 0.7f;
+    /* Fixed tape-like saturation — independent of tone setting */
+    wet_l = tanhf(wet_l * 1.8f) / 1.8f;
+    wet_r = tanhf(wet_r * 1.8f) / 1.8f;
+
+    if (feeding)
+        delay_write(d, *l + wet_l * feedback, *r + wet_r * feedback);
+    else
+        delay_write(d, wet_l * feedback, wet_r * feedback);
+
+    *l += wet_l * level;
+    *r += wet_r * level;
 }
 
 static void process_ping_pong_throw(pfx_slot_t *s, float *l, float *r,
-                                     int feeding, float bpm, float beat_mult) {
+                                     int feeding, float bpm, float division01) {
     delay_t *d = &s->delay;
 
     /* True stereo ping-pong:
      * L tap at 1x delay, R tap at 2x delay.
      * Feedback crosses: L output feeds R input, R output feeds L input. */
     float b = bpm < 20.0f ? 120.0f : bpm;
-    int half_delay = (int)(60.0f / b * beat_mult * PFX_SAMPLE_RATE);
+    int half_delay = (int)(60.0f / b * pfx_echo_division_multiplier(division01) * PFX_SAMPLE_RATE);
     if (half_delay < 100) half_delay = 100;
     if (half_delay > PFX_SAMPLE_RATE / 2) half_delay = PFX_SAMPLE_RATE / 2;
     int full_delay = half_delay * 2;
 
+    float base_fb = 0.1f + s->params[0] * 0.6f;
+    float bandpass = s->params[1];
+    float level = 0.1f + s->params[2] * 1.1f;
+
+    /* Pressure extends feedback on top of knob baseline */
     float pr = pressure_relative(s->pressure, s->velocity, s->settle_counter);
-    float fb = 0.2f + pr * 0.3f;
+    float fb = base_fb + pr * (0.90f - base_fb);
 
     /* Read L at 1x (short tap), R at 2x (long tap) */
     float dl_short, dr_short, dl_long, dr_long;
     delay_read(d, half_delay, &dl_short, &dr_short);
     delay_read(d, full_delay, &dl_long, &dr_long);
 
+    /* Tone filter on feedback path */
+    float f_coeff = 0.08f + bandpass * 0.75f;
+    d->fb_lp_l += f_coeff * (dl_long  - d->fb_lp_l);
+    d->fb_lp_r += f_coeff * (dl_short - d->fb_lp_r);
+
     float in_l = feeding ? *l : 0.0f;
     float in_r = feeding ? *r : 0.0f;
 
     /* Cross-feed: R delay output feeds back into L, and vice versa */
     delay_write(d,
-        in_l + dr_long * fb,
-        in_r + dl_short * fb);
+        in_l + d->fb_lp_r * fb,
+        in_r + d->fb_lp_l * fb);
 
     /* L gets the short tap, R gets the long tap — creates the panning bounce */
-    *l += dl_short * 0.7f;
-    *r += dr_long * 0.7f;
+    *l += dl_short * level;
+    *r += dr_long  * level;
 }
 
 /* Reverb: per-sample processing via pfx_revsc (Costello/Soundpipe FDN reverb).
@@ -1383,10 +1487,15 @@ static void process_reverb_throw(pfx_slot_t *s, int slot, float *l, float *r,
         default:           base_fb = 0.80f; lpfreq = 10000.0f; break;
     }
 
-    /* Pressure modulates feedback: center = base, full = 0.97 */
-    float pr = pressure_relative(s->pressure, s->velocity, s->settle_counter);
-    rv->feedback = base_fb + pr * (0.97f - base_fb);
-    rv->lpfreq = lpfreq;
+    float decay = s->params[0];   /* 0=short, 0.5=natural, 1=long */
+    float tone  = s->params[1];
+    float level = 0.1f + s->params[2] * 1.1f;
+    /* Scale decay symmetrically around the per-type preset */
+    float fb = base_fb * 0.6f + decay * (base_fb * 0.8f);
+    if (fb > 0.97f) fb = 0.97f;
+    if (fb < 0.10f) fb = 0.10f;
+    rv->feedback = fb;
+    rv->lpfreq = 1800.0f + tone * (lpfreq - 1800.0f);
 
     float in_l = feeding ? *l : 0.0f;
     float in_r = feeding ? *r : 0.0f;
@@ -1404,8 +1513,8 @@ static void process_reverb_throw(pfx_slot_t *s, int slot, float *l, float *r,
     pfx_revsc_process(rv, in_l, in_r, &out_l, &out_r);
 
     /* Send-style mix */
-    *l += out_l * 0.7f;
-    *r += out_r * 0.7f;
+    *l += out_l * level;
+    *r += out_r * level;
 }
 
 /* ============================================================
@@ -1650,21 +1759,50 @@ static void process_vinyl_sim(pfx_slot_t *s, float *l, float *r,
     }
 }
 
-/* Pitch down: -1 octave via bungee pitch shift (speed=1.0, pitch=0.5) */
 static void process_pitch_down(pfx_slot_t *s, float *l, float *r) {
-    pfx_bungee_t *b = (pfx_bungee_t *)s->bungee;
-    if (!b) return;
+    float pr = pressure_relative(s->pressure, s->velocity, s->settle_counter);
+    float tone = 0.06f + s->params[0] * 0.16f;
+    float drive = 1.5f + pr * 2.5f;
+    float mono = (*l + *r) * 0.5f;
+    float low;
 
-    /* Feed live audio into bungee */
-    float in_lr[2] = { *l, *r };
-    pfx_bungee_write(b, in_lr, 1);
+    svf_process(&s->sat_filter_l, mono, cutoff_to_f(tone), 0.65f, &low, NULL, NULL);
+    low = tanhf(low * drive) / drive;
 
-    /* Read pitch-shifted output */
-    float out_lr[2] = { 0.0f, 0.0f };
-    pfx_bungee_read(b, out_lr, 1);
+    *l = *l * 0.25f + low * 1.1f;
+    *r = *r * 0.25f + low * 1.1f;
+}
 
-    *l = out_lr[0];
-    *r = out_lr[1];
+static void process_sample_player(pfx_slot_t *s, float *l, float *r) {
+    if (!s->sample.buf || s->sample.length <= 0) {
+        s->active = 0;
+        s->sample.playing = 0;
+        return;
+    }
+    if (!s->sample.playing || s->sample.pos >= s->sample.length) {
+        s->active = 0;
+        s->sample.playing = 0;
+        return;
+    }
+
+    float sample = (float)s->sample.buf[s->sample.pos] / 32768.0f;
+    s->sample.pos++;
+    if (s->sample.pos >= s->sample.length) {
+        s->sample.playing = 0;
+        s->active = 0;
+    }
+
+    /* params[0]=tone/filter, params[1]=drive, params[2]=volume */
+    float tone = 0.08f + s->params[0] * 0.32f;
+    float drive = 0.5f + s->params[1] * 3.0f;
+    float level = 0.5f + s->params[2] * 1.5f;
+    float filtered;
+
+    svf_process(&s->sat_filter_l, sample, cutoff_to_f(tone), 0.55f, &filtered, NULL, NULL);
+    filtered = tanhf(filtered * drive);
+
+    *l += filtered * level;
+    *r += filtered * level;
 }
 
 /* ============================================================
@@ -1732,16 +1870,16 @@ static void process_slot(perf_fx_engine_t *e, int slot, float *l, float *r,
 
         /* Row 2: Space Throws */
         case FX_DELAY:
-            process_delay_throw(s, l, r, feeding, e->bpm, 1.0f);   /* quarter note */
+            process_delay_throw(s, l, r, feeding, e->bpm, e->echo_division);
             break;
         case FX_DELAY_DOT8:
-            process_delay_throw(s, l, r, feeding, e->bpm, 0.75f);  /* dotted 8th */
+            process_delay_throw(s, l, r, feeding, e->bpm, e->echo_division);
             break;
         case FX_PING_PONG:
-            process_ping_pong_throw(s, l, r, feeding, e->bpm, 1.0f);   /* quarter note */
+            process_ping_pong_throw(s, l, r, feeding, e->bpm, e->echo_division);
             break;
         case FX_PING_PONG_DOT8:
-            process_ping_pong_throw(s, l, r, feeding, e->bpm, 0.75f);  /* dotted 8th */
+            process_ping_pong_throw(s, l, r, feeding, e->bpm, e->echo_division);
             break;
         case FX_REVERB:   /* Room */
         case FX_HALL:
@@ -1752,28 +1890,28 @@ static void process_slot(perf_fx_engine_t *e, int slot, float *l, float *r,
 
         /* Row 1: Distortion & Rhythm */
         case FX_BITCRUSH:
-            process_bitcrush(s, l, r);
+            process_sample_player(s, l, r);
             break;
         case FX_DOWNSAMPLE:
-            process_downsample(s, l, r);
+            process_sample_player(s, l, r);
             break;
         case FX_SATURATE:
-            process_saturate(s, l, r);
+            process_sample_player(s, l, r);
             break;
         case FX_GATE_DUCK:
-            process_gate_duck(s, l, r, e);
+            process_sample_player(s, l, r);
             break;
         case FX_TREMOLO:
-            process_tremolo(s, l, r);
+            process_sample_player(s, l, r);
             break;
         case FX_VINYL_SIM:
-            process_vinyl_sim(s, l, r, e);
+            process_sample_player(s, l, r);
             break;
         case FX_PITCH_DOWN:
-            process_pitch_down(s, l, r);
+            process_sample_player(s, l, r);
             break;
         case FX_TAPE_STOP:
-            process_vinyl_brake(s, l, r);
+            process_sample_player(s, l, r);
             break;
     }
 }
@@ -1921,27 +2059,24 @@ void pfx_engine_render(perf_fx_engine_t *e, int16_t *out_lr, int frames) {
         if (!e->bypassed) {
             process_all_slots(e, &l, &r);
 
-            /* E4: DJ Filter (center=off, CCW=LPF, CW=HPF) */
-            if (e->dj_filter < 0.48f) {
-                /* LPF side: 0.0 = fully closed, 0.48 = open */
-                float cut = e->dj_filter / 0.48f; /* 0..1 */
+            /* Dedicated dub filter: knob always controls cutoff, mode chooses LPF/HPF */
+            {
+                float cut = clampf(e->dj_filter, 0.02f, 0.98f);
                 float f = cutoff_to_f(cut);
-                float reso = 0.4f + (1.0f - cut) * 0.4f; /* more reso when closed */
-                float lp_l, lp_r;
-                svf_process(&e->global_lp_l, l, f, reso, &lp_l, NULL, NULL);
-                svf_process(&e->global_lp_r, r, f, reso, &lp_r, NULL, NULL);
-                l = lp_l;
-                r = lp_r;
-            } else if (e->dj_filter > 0.52f) {
-                /* HPF side: 0.52 = open, 1.0 = fully closed */
-                float cut = (e->dj_filter - 0.52f) / 0.48f; /* 0..1 */
-                float f = cutoff_to_f(cut);
-                float reso = 0.4f + cut * 0.4f; /* more reso when closed */
-                float hp_l, hp_r;
-                svf_process(&e->global_hp_l, l, f, reso, NULL, &hp_l, NULL);
-                svf_process(&e->global_hp_r, r, f, reso, NULL, &hp_r, NULL);
-                l = hp_l;
-                r = hp_r;
+                float reso = 0.35f + (1.0f - cut) * 0.45f;
+                if (e->filter_mode == 0) {
+                    float lp_l, lp_r;
+                    svf_process(&e->global_lp_l, l, f, reso, &lp_l, NULL, NULL);
+                    svf_process(&e->global_lp_r, r, f, reso, &lp_r, NULL, NULL);
+                    l = lp_l;
+                    r = lp_r;
+                } else {
+                    float hp_l, hp_r;
+                    svf_process(&e->global_hp_l, l, f, reso, NULL, &hp_l, NULL);
+                    svf_process(&e->global_hp_r, r, f, reso, NULL, &hp_r, NULL);
+                    l = hp_l;
+                    r = hp_r;
+                }
             }
 
             /* E7: Tilt EQ (center=flat, CCW=bass boost+treble cut, CW=treble boost+bass cut) */
@@ -1957,6 +2092,23 @@ void pfx_engine_render(perf_fx_engine_t *e, int16_t *out_lr, int frames) {
                 /* Boost one end, cut the other */
                 l += lp_l * (-tilt) * 0.5f + hp_l * tilt * 0.5f;
                 r += lp_r * (-tilt) * 0.5f + hp_r * tilt * 0.5f;
+            }
+
+            /* 4-band dub isolator: sub / low / mid / high */
+            if (e->sub_eq != 1.0f || e->low_eq != 1.0f || e->mid_eq != 1.0f || e->high_eq != 1.0f) {
+                float sub_l, sub_r, lowfull_l, lowfull_r, high_l, high_r;
+                svf_process(&e->iso_sub_l, l, cutoff_to_f(0.08f), 0.55f, &sub_l, NULL, NULL);
+                svf_process(&e->iso_sub_r, r, cutoff_to_f(0.08f), 0.55f, &sub_r, NULL, NULL);
+                svf_process(&e->iso_low_l, l, cutoff_to_f(0.18f), 0.6f, &lowfull_l, NULL, NULL);
+                svf_process(&e->iso_low_r, r, cutoff_to_f(0.18f), 0.6f, &lowfull_r, NULL, NULL);
+                svf_process(&e->iso_high_l, l, cutoff_to_f(0.58f), 0.6f, NULL, &high_l, NULL);
+                svf_process(&e->iso_high_r, r, cutoff_to_f(0.58f), 0.6f, NULL, &high_r, NULL);
+                float low_l = lowfull_l - sub_l;
+                float low_r = lowfull_r - sub_r;
+                float mid_l = l - lowfull_l - high_l;
+                float mid_r = r - lowfull_r - high_r;
+                l = sub_l * e->sub_eq + low_l * e->low_eq + mid_l * e->mid_eq + high_l * e->high_eq;
+                r = sub_r * e->sub_eq + low_r * e->low_eq + mid_r * e->mid_eq + high_r * e->high_eq;
             }
 
             /* E8: Dry/wet mix */
@@ -1991,8 +2143,14 @@ int pfx_serialize_state(perf_fx_engine_t *e, char *buf, int buf_len) {
     SAFE_SNPRINTF(buf, n, buf_len, ",\"dj_filter\":%.3f", e->dj_filter);
     SAFE_SNPRINTF(buf, n, buf_len, ",\"tilt_eq\":%.3f", e->tilt_eq);
     SAFE_SNPRINTF(buf, n, buf_len, ",\"dry_wet\":%.3f", e->dry_wet);
+    SAFE_SNPRINTF(buf, n, buf_len, ",\"filter_mode\":%d", e->filter_mode);
+    SAFE_SNPRINTF(buf, n, buf_len, ",\"low_eq\":%.3f", e->low_eq);
+    SAFE_SNPRINTF(buf, n, buf_len, ",\"mid_eq\":%.3f", e->mid_eq);
+    SAFE_SNPRINTF(buf, n, buf_len, ",\"high_eq\":%.3f", e->high_eq);
+    SAFE_SNPRINTF(buf, n, buf_len, ",\"sub_eq\":%.3f", e->sub_eq);
     SAFE_SNPRINTF(buf, n, buf_len, ",\"repeat_rate\":%.3f", e->repeat_rate);
     SAFE_SNPRINTF(buf, n, buf_len, ",\"repeat_speed\":%.3f", e->repeat_speed);
+    SAFE_SNPRINTF(buf, n, buf_len, ",\"echo_division\":%.3f", e->echo_division);
     SAFE_SNPRINTF(buf, n, buf_len, ",\"pressure_curve\":%d", e->pressure_curve);
     /* audio_source and track_mask intentionally not persisted — always start as Move Mix */
     SAFE_SNPRINTF(buf, n, buf_len, ",\"last_touched\":%d", e->last_touched_slot);
