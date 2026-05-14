@@ -49,41 +49,41 @@ static const char *FX_NAMES[PFX_NUM_FX] = {
 /* Per-FX param names (4 params each, mapped to E1-E4) */
 static const char *FX_PARAM_NAMES[PFX_NUM_FX][PFX_SLOT_PARAMS] = {
     /* Row 4: Time/Repeat */
-    {"Speed",  "Filter", "Gate"},           /* RPT 1/4 */
-    {"Speed",  "Filter", "Gate"},           /* RPT 1/8 */
-    {"Speed",  "Filter", "Gate"},           /* RPT 1/16 */
-    {"Speed",  "Filter", "Gate"},           /* RPT Trip */
-    {"Speed",  "Filter", "Gate"},           /* Stutter */
-    {"Pattern", "Gate",  "Revrse"},         /* Scatter */
-    {"Feedbk", "Filter", "Mix"},            /* Reverse */
-    {"Tone",   "WowFlt", "Mix"},            /* Half Speed */
+    {"Speed",  "Filter", "Gate",  "---"},   /* RPT 1/4 */
+    {"Speed",  "Filter", "Gate",  "---"},   /* RPT 1/8 */
+    {"Speed",  "Filter", "Gate",  "---"},   /* RPT 1/16 */
+    {"Speed",  "Filter", "Gate",  "---"},   /* RPT Trip */
+    {"Speed",  "Filter", "Gate",  "---"},   /* Stutter */
+    {"Pattern", "Gate",  "Revrse","---"},   /* Scatter */
+    {"Feedbk", "Filter", "Mix",   "---"},   /* Reverse */
+    {"Tone",   "WowFlt", "Mix",   "---"},   /* Half Speed */
     /* Row 3: Filter Sweeps */
-    {"Speed",  "Reso",   "Depth"},          /* LP Sweep Down */
-    {"Speed",  "Reso",   "Depth"},          /* HP Sweep Up */
-    {"Speed",  "Reso",   "Width"},          /* BP Rise */
-    {"Speed",  "Reso",   "Width"},          /* BP Fall */
-    {"Speed",  "Reso",   "Mix"},            /* Reso Sweep */
-    {"Depth",  "Feedbk", "Mix"},            /* Phaser */
-    {"Depth",  "Feedbk", "Mix"},            /* Flanger */
-    {"Depth",  "Center", "Reso"},           /* Auto Filter */
+    {"Speed",  "Reso",   "Depth", "---"},   /* LP Sweep Down */
+    {"Speed",  "Reso",   "Depth", "---"},   /* HP Sweep Up */
+    {"Speed",  "Reso",   "Width", "---"},   /* BP Rise */
+    {"Speed",  "Reso",   "Width", "---"},   /* BP Fall */
+    {"Speed",  "Reso",   "Mix",   "---"},   /* Reso Sweep */
+    {"Depth",  "Feedbk", "Mix",   "---"},   /* Phaser */
+    {"Depth",  "Feedbk", "Mix",   "---"},   /* Flanger */
+    {"Depth",  "Center", "Reso",  "---"},   /* Auto Filter */
     /* Row 2: Space Throws */
-    {"Feedbk", "Filter", "Level"},          /* Delay 1/4 */
-    {"Feedbk", "Filter", "Level"},          /* Delay Dot8 */
-    {"Feedbk", "Filter", "Level"},          /* Ping Pong */
-    {"Feedbk", "Filter", "Level"},          /* PP Dot8 */
-    {"Time",   "Filter", "Level"},          /* Reverb */
-    {"Time",   "Filter", "Level"},          /* Hall */
-    {"Time",   "Filter", "Level"},          /* Dark Verb */
-    {"Time",   "Filter", "Level"},          /* Spring */
+    {"Feedbk", "Filter", "Level", "---"},   /* Delay 1/4 */
+    {"Feedbk", "Filter", "Level", "---"},   /* Delay Dot8 */
+    {"Feedbk", "Filter", "Level", "---"},   /* Ping Pong */
+    {"Feedbk", "Filter", "Level", "---"},   /* PP Dot8 */
+    {"Time",   "Filter", "Level", "Width"}, /* Reverb */
+    {"Time",   "Filter", "Level", "Width"}, /* Hall */
+    {"Time",   "Filter", "Level", "Width"}, /* Dark Verb */
+    {"Time",   "Filter", "Level", "Width"}, /* Spring */
     /* Row 1: Distortion & Rhythm */
-    {"Filter", "Tone",   "Mix"},            /* Bitcrush */
-    {"Filter", "Tone",   "Mix"},            /* Downsample */
-    {"Drive",  "Tone",   "Mix"},            /* Saturate */
-    {"Speed",  "Shape",  "Depth"},          /* Gate/Duck */
-    {"Rate",   "Depth",  "Wave"},           /* Tremolo */
-    {"Tone",   "WowFlt", "Mix"},            /* Octave Down */
-    {"Noise",  "WowFlt", "Tone"},           /* Vinyl Sim */
-    {"Speed",  "Tone",   "Mix"}             /* Tape Stop */
+    {"Filter", "Tone",   "Mix",   "---"},   /* Bitcrush */
+    {"Filter", "Tone",   "Mix",   "---"},   /* Downsample */
+    {"Drive",  "Tone",   "Mix",   "---"},   /* Saturate */
+    {"Speed",  "Shape",  "Depth", "---"},   /* Gate/Duck */
+    {"Rate",   "Depth",  "Wave",  "---"},   /* Tremolo */
+    {"Tone",   "WowFlt", "Mix",   "---"},   /* Octave Down */
+    {"Noise",  "WowFlt", "Tone",  "---"},   /* Vinyl Sim */
+    {"Speed",  "Tone",   "Mix",   "---"}    /* Tape Stop */
 };
 
 typedef struct {

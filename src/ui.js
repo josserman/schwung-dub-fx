@@ -229,8 +229,8 @@ let fxHeld = new Array(NUM_SLOTS).fill(false); /* physically held (finger on pad
  * All others: 0.5 matches pre-knob behavior */
 let slotParams = [];
 for (let i = 0; i < NUM_SLOTS; i++) {
-    if (i < 8) slotParams.push([0.5, 0.0, 0.5]);  /* repeat: gate off */
-    else slotParams.push([0.5, 0.5, 0.5]);          /* others: neutral */
+    if (i < 8) slotParams.push([0.5, 0.0, 0.5, 0.5]);  /* repeat: gate off */
+    else slotParams.push([0.5, 0.5, 0.5, 0.5]);          /* others: neutral */
 }
 /* Last touched slot for E1-E3 mapping */
 let lastTouchedSlot = -1;
@@ -347,7 +347,7 @@ function loadState() {
 
         /* Restore per-slot params */
         for (let i = 0; i < NUM_SLOTS; i++) {
-            for (let j = 0; j < 3; j++) {
+            for (let j = 0; j < 4; j++) {
                 sendParam(`punch_${i}_param_${j}`, slotParams[i][j].toFixed(3));
             }
         }
@@ -769,7 +769,7 @@ function getKnobLabel(bank, knobIndex) {
         return ['Time', 'Feedbk', 'Filter', 'Vol', 'Warm', 'D/W', '---', 'Filt'][knobIndex];
     }
     if (bank === BANK_REVERB) {
-        return ['Size', 'Filter', 'Vol', '---', '---', '---', '---', 'Filt'][knobIndex];
+        return ['Size', 'Filter', 'Vol', 'Width', '---', '---', '---', 'Filt'][knobIndex];
     }
     if (bank === BANK_SIREN) {
         return ['Rate', 'Depth', 'Vol', '---', '---', '---', '---', 'Filt'][knobIndex];
@@ -1190,6 +1190,10 @@ function handleKnob(knobIndex, delta) {
             setGroupedSlotParam(REVERB_SLOTS, 2, nudgeValue(slotParams[REVERB_SLOTS[0]][2], delta), 'Reverb', 'Volume');
             return;
         }
+        if (knobIndex === 3) {
+            setGroupedSlotParam(REVERB_SLOTS, 3, nudgeValue(slotParams[REVERB_SLOTS[0]][3], delta), 'Reverb', 'Width');
+            return;
+        }
         if (knobIndex === 7) {
             filterCutoffValue = nudgeValue(filterCutoffValue, delta);
             sendParam('dj_filter', filterCutoffValue.toFixed(3));
@@ -1280,6 +1284,10 @@ function handleKnobPeek(knobNote) {
         }
         if (knobNote === 2) {
             showOverlay('Reverb', 'Volume', slotParams[REVERB_SLOTS[0]][2].toFixed(2));
+            return;
+        }
+        if (knobNote === 3) {
+            showOverlay('Reverb', 'Width', slotParams[REVERB_SLOTS[0]][3].toFixed(2));
             return;
         }
     }

@@ -48,7 +48,7 @@ static inline float pressure_relative(float pressure, float initial,
 #define PFX_CAPTURE_BUF     (PFX_SAMPLE_RATE * 4)   /* 4 seconds shared capture */
 #define PFX_CHORUS_BUF      (PFX_SAMPLE_RATE * 1)   /* 1 second for chorus/flanger */
 #define PFX_NUM_FX          32
-#define PFX_SLOT_PARAMS     3   /* params per FX slot (E1-E3) */
+#define PFX_SLOT_PARAMS     4   /* params per FX slot (E1-E4) */
 #define PFX_NUM_GLOBALS     8   /* repeat, tilt, filter, iso, dry/wet */
 #define PFX_NUM_ALLPASS     6   /* phaser stages */
 

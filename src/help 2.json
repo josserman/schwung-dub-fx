@@ -1,0 +1,201 @@
+{
+  "title": "Performance FX",
+  "children": [
+    {
+      "title": "Getting Started",
+      "lines": [
+        "32 punch-in audio FX.",
+        "Hold a pad = FX on.",
+        "Release = FX off.",
+        "Press harder for more!",
+        "",
+        "LAUNCH: Shift+Vol+Jog",
+        "then select Performance FX",
+        "",
+        "TRY IT:",
+        "1. Play something on Move",
+        "2. Hold any pad - hear it!",
+        "3. Press harder = more FX",
+        "4. Shift+hold = latch on",
+        "5. Turn knobs to tweak",
+        "6. Back = exit"
+      ]
+    },
+    {
+      "title": "Pad Layout",
+      "lines": [
+        "All 32 pads are punch-in.",
+        "Hold = on, release = off.",
+        "Pressure controls the FX.",
+        "",
+        "Row 4 (orange): Time",
+        "  1/4  1/8  1/16  Trip",
+        "  Stut Scat Rev   Strch",
+        "",
+        "Row 3 (blue): Filters",
+        "  LP   HP   BPup BPdn",
+        "  Reso Phas Flan Auto",
+        "",
+        "Row 2 (purple): Space",
+        "  Dly  DlyD PP   PPD",
+        "  Room Hall Dark Sprg",
+        "",
+        "Row 1 (mixed): Distort",
+        "  Crsh Down Sat  Gate",
+        "  Trem Oct  Vnyl VnBk"
+      ]
+    },
+    {
+      "title": "Latching",
+      "lines": [
+        "Any FX can be latched",
+        "(stays on after release).",
+        "",
+        "LATCH: Shift + hold pad",
+        "  Pad turns red = latched",
+        "",
+        "UNLATCH: Shift + hold",
+        "  the latched pad again",
+        "",
+        "Also: hold pad, then",
+        "press Shift to toggle.",
+        "",
+        "Tap a latched pad to",
+        "select it for E4-E6",
+        "knob editing."
+      ]
+    },
+    {
+      "title": "Knobs",
+      "lines": [
+        "Touch any knob to see",
+        "what it controls.",
+        "",
+        "E1: Repeat Length (time)",
+        "E2: Repeat Speed",
+        "  (center=normal)",
+        "E3: Repeat Loop On/Off",
+        "  (right=on, left=off)",
+        "",
+        "E4: Per-FX param 1",
+        "E5: Per-FX param 2",
+        "E6: Per-FX param 3",
+        "  (last touched pad)",
+        "",
+        "E7: Tilt EQ",
+        "E8: DJ Filter",
+        "",
+        "Volume knob: host volume",
+        "  (always pass-through)"
+      ]
+    },
+    {
+      "title": "Per-FX Params (E4-E6)",
+      "lines": [
+        "Tap a pad to select it,",
+        "then use E4/E5/E6.",
+        "",
+        "Repeats: Filter Gate ---",
+        "Scatter: Pattrn Gate Rev",
+        "Reverse: Fdbk Filter Mix",
+        "Stretch: Tone WowFl Mix",
+        "",
+        "Filters: Speed Reso Dep",
+        "BP:      Speed Reso Wid",
+        "Phaser:  Depth Fdbk Mix",
+        "AutoFlt: Depth Centr Res",
+        "",
+        "Delays: Feedbk Tone Lvl",
+        "Reverbs: Time Tone Lvl",
+        "",
+        "Crush:   Filter Tone Mix",
+        "Saturate: Drive Tone Mix",
+        "Gate:    Speed Shape Dep",
+        "Tremolo: Rate Depth Wave",
+        "Oct Dn:  Tone WowFl Mix",
+        "Vinyl:   Noise WowFl Ton",
+        "VnlBrk:  Speed Tone Mix"
+      ]
+    },
+    {
+      "title": "Pressure",
+      "lines": [
+        "Each FX has its own",
+        "pressure response:",
+        "",
+        "Repeats: pitch drift",
+        "LP/HP sweep: sweep speed",
+        "BP/Reso: resonance",
+        "Phaser/Flanger: depth",
+        "Delay: feedback amount",
+        "Reverb: decay length",
+        "Bitcrush: bit depth",
+        "Saturate: drive amount",
+        "Tremolo: depth",
+        "",
+        "All FX sound dramatic",
+        "on tap - pressure adds",
+        "extra dimension."
+      ]
+    },
+    {
+      "title": "Bypass",
+      "lines": [
+        "Undo button: Bypass",
+        "",
+        "Tap = toggle on/off",
+        "Hold = momentary bypass",
+        "  (release to resume)",
+        "",
+        "When bypassed, audio",
+        "passes through dry.",
+        "All FX remain in their",
+        "current state but are",
+        "silenced until bypass",
+        "is toggled off."
+      ]
+    },
+    {
+      "title": "Tempo & Controls",
+      "lines": [
+        "Jog click: Tap tempo",
+        "  (tap 2+ times)",
+        "",
+        "Jog turn:",
+        "  Coarse BPM (+/- 1)",
+        "",
+        "Shift+Jog turn:",
+        "  Fine BPM (+/- 0.5)",
+        "",
+        "BPM range: 20-300",
+        "",
+        "Back: Exit Performance FX"
+      ]
+    },
+    {
+      "title": "Tips",
+      "lines": [
+        "- Press harder for more!",
+        "  Each FX responds to",
+        "  pressure differently.",
+        "",
+        "- Latch multiple FX for",
+        "  layered sound design",
+        "",
+        "- Filter sweeps animate",
+        "  while held - try LP!",
+        "",
+        "- Space FX (row 2) have",
+        "  natural tail decay",
+        "  after release",
+        "",
+        "- Repeat rate knob",
+        "  changes take effect",
+        "  immediately",
+        "",
+        "- Tap latched pads to",
+        "  select for knob tweaks"
+      ]
+    }
+  ]
+}
