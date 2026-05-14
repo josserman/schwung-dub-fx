@@ -1876,66 +1876,89 @@ static void pfx_conv_process(pfx_conv_t *c, float in_l, float in_r,
 }
 
 /* Reverb: per-sample processing via pfx_revsc (Costello/Soundpipe FDN reverb).
- * Pressure modulates feedback (decay). Each slot type has different base
- * feedback and LP cutoff to create Room, Hall, Dark Verb, Spring characters.
  * params[0]: Room Size (0=tiny, 0.5=medium, 1=infinite)
- * params[1]: HFD — High Frequency Damping (0=bright, 1=dark)
- * params[2]: Level */
+ * params[1]: Filter character — four zones:
+ *   0.00–0.28  HPF  (thin/airy reverb tail)
+ *   0.28–0.55  flat/bypass
+ *   0.55–0.72  LPF  (warm to dark)
+ *   0.72–1.00  BPF  (telephone/resonant, Q rises to 2.0)
+ * params[2]: Level
+ * HFD is baked in per-slot for natural character; uses sat_filter_l/r for SVF state. */
 static void process_reverb_throw(pfx_slot_t *s, int slot, float *l, float *r,
                                   int feeding) {
     pfx_revsc_t *rv = (pfx_revsc_t *)s->ext_instance;
     if (!rv) return;
 
-    float room_size = s->params[0]; /* 0=tiny, 0.5=medium, 1=infinite */
-    float hfd       = s->params[1]; /* 0=bright, 1=dark */
-    float level     = 0.1f + s->params[2] * 1.2f; /* expanded range vs old 1.1 */
+    float room_size  = s->params[0];
+    float filter_char = s->params[1]; /* 0..1 post-reverb filter character */
+    float level      = 0.1f + s->params[2] * 1.2f;
 
-    /* Per-slot character: base_fb and max lpfreq */
-    float base_fb, max_lpfreq;
+    /* Per-slot character: base feedback and natural HFD (fixed — not user-controlled) */
+    float base_fb, natural_lpfreq;
     switch (slot) {
-        case FX_REVERB:    base_fb = 0.50f; max_lpfreq = 12000.0f; break; /* Room */
-        case FX_HALL:      base_fb = 0.75f; max_lpfreq = 12000.0f; break; /* Hall */
-        case FX_DARK_VERB: base_fb = 0.80f; max_lpfreq =  6000.0f; break; /* Dark */
-        case FX_SPRING:    base_fb = 0.65f; max_lpfreq =  8000.0f; break; /* Spring */
-        default:           base_fb = 0.60f; max_lpfreq = 10000.0f; break;
+        case FX_REVERB:    base_fb = 0.50f; natural_lpfreq =  9000.0f; break; /* Room */
+        case FX_HALL:      base_fb = 0.75f; natural_lpfreq =  7000.0f; break; /* Hall */
+        case FX_DARK_VERB: base_fb = 0.80f; natural_lpfreq =  3500.0f; break; /* Dark */
+        case FX_SPRING:    base_fb = 0.65f; natural_lpfreq =  6000.0f; break; /* Spring */
+        default:           base_fb = 0.60f; natural_lpfreq =  8000.0f; break;
     }
 
-    /* Map room size more linearly: 0=tiny (base*0.5), 0.5=natural, 1=infinite (0.99) */
     float fb = base_fb * 0.5f + room_size * (0.99f - base_fb * 0.5f);
     if (fb > 0.99f) fb = 0.99f;
     if (fb < 0.05f) fb = 0.05f;
     rv->feedback = fb;
-
-    /* HFD maps: 0=bright (12000 Hz), 1=very dark (1800 Hz) */
-    rv->lpfreq = 12000.0f - hfd * 10200.0f; /* range 1800-12000 Hz */
-    /* But clamp to per-slot max for character */
-    if (rv->lpfreq > max_lpfreq) rv->lpfreq = max_lpfreq;
+    rv->lpfreq   = natural_lpfreq;
 
     float in_l = feeding ? *l : 0.0f;
     float in_r = feeding ? *r : 0.0f;
 
     /* Spring: IR convolution if loaded, otherwise FDN with pre-delay */
-    if (slot == FX_SPRING && s->conv.ir_len > 0) {
-        float conv_out_l, conv_out_r;
-        pfx_conv_process(&s->conv, in_l, in_r, &conv_out_l, &conv_out_r);
-        *l += conv_out_l * level;
-        *r += conv_out_r * level;
-        return; /* skip FDN */
-    }
-
-    /* Spring: cut lows going in for that thin, metallic character */
-    if (slot == FX_SPRING) {
-        float hp_c = 0.05f; /* ~350 Hz highpass */
-        s->filter_l.lp += hp_c * (in_l - s->filter_l.lp);
-        s->filter_r.lp += hp_c * (in_r - s->filter_r.lp);
-        in_l -= s->filter_l.lp;
-        in_r -= s->filter_r.lp;
-    }
-
     float out_l, out_r;
-    pfx_revsc_process(rv, in_l, in_r, &out_l, &out_r);
+    if (slot == FX_SPRING && s->conv.ir_len > 0) {
+        pfx_conv_process(&s->conv, in_l, in_r, &out_l, &out_r);
+    } else {
+        /* Spring: cut lows going in for that thin, metallic FDN character */
+        if (slot == FX_SPRING) {
+            float hp_c = 0.05f; /* ~350 Hz highpass */
+            s->filter_l.lp += hp_c * (in_l - s->filter_l.lp);
+            s->filter_r.lp += hp_c * (in_r - s->filter_r.lp);
+            in_l -= s->filter_l.lp;
+            in_r -= s->filter_r.lp;
+        }
+        pfx_revsc_process(rv, in_l, in_r, &out_l, &out_r);
+    }
 
-    /* Send-style mix */
+    /* Post-reverb output filter — same four zones as echo filter.
+     * Uses sat_filter_l/r (idle on reverb slots) as SVF state. */
+    if (filter_char < 0.28f) {
+        float t = 1.0f - filter_char / 0.28f;
+        float cutoff = 0.05f + t * 0.40f;
+        float f = cutoff_to_f(cutoff);
+        float hp_l, hp_r;
+        svf_process(&s->sat_filter_l, out_l, f, 0.5f, NULL, &hp_l, NULL);
+        svf_process(&s->sat_filter_r, out_r, f, 0.5f, NULL, &hp_r, NULL);
+        out_l = hp_l;  out_r = hp_r;
+    } else if (filter_char > 0.72f) {
+        float t = (filter_char - 0.72f) / 0.28f;
+        float center = 0.04f + t * 0.22f;
+        float q = 0.4f + t * 1.6f;
+        float f = cutoff_to_f(center);
+        float bp_l, bp_r;
+        svf_process(&s->sat_filter_l, out_l, f, q, NULL, NULL, &bp_l);
+        svf_process(&s->sat_filter_r, out_r, f, q, NULL, NULL, &bp_r);
+        out_l = bp_l;  out_r = bp_r;
+    } else if (filter_char > 0.55f) {
+        float t = (filter_char - 0.55f) / (0.72f - 0.55f);
+        float cutoff = 0.9f - t * 0.70f;
+        float f = cutoff_to_f(cutoff);
+        float lp_l, lp_r;
+        svf_process(&s->sat_filter_l, out_l, f, 0.5f, &lp_l, NULL, NULL);
+        svf_process(&s->sat_filter_r, out_r, f, 0.5f, &lp_r, NULL, NULL);
+        out_l = lp_l;  out_r = lp_r;
+    } else {
+        /* Flat/bypass — no SVF update needed */
+    }
+
     *l += out_l * level;
     *r += out_r * level;
 }
