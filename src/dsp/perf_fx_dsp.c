@@ -1690,12 +1690,12 @@ static void process_delay_throw(pfx_slot_t *s, float *l, float *r,
                                  int feeding, float bpm, float division01) {
     delay_t *d = &s->delay;
 
-    /* params[0]: Feedback — extended to allow self-oscillation */
-    float feedback = 0.1f + s->params[0] * 0.95f;
-    /* Pressure boost on top of knob (up to +0.13 total, capped at 1.08 to prevent DC blowup) */
+    /* params[0]: Feedback — capped strictly below unity to prevent runaway */
+    float feedback = 0.1f + s->params[0] * 0.85f;  /* 0.10..0.95 across knob range */
+    /* Pressure shifts feedback ±0.07 — stays sub-unity at all times */
     float pr = pressure_relative(s->pressure, s->velocity, s->settle_counter);
-    feedback += (pr - 0.5f) * 0.26f;
-    if (feedback > 1.08f) feedback = 1.08f;
+    feedback += (pr - 0.5f) * 0.14f;
+    if (feedback > 0.97f) feedback = 0.97f;
     if (feedback < 0.0f) feedback = 0.0f;
 
     /* params[1]: Filter CHARACTER — 0=HPF (thin/tape), 0.5=flat/warm, 1=LPF (dark) */
@@ -1764,16 +1764,16 @@ static void process_ping_pong_throw(pfx_slot_t *s, float *l, float *r,
     if (half_delay > (PFX_MAX_DELAY - PFX_BLOCK_SIZE) / 2) half_delay = (PFX_MAX_DELAY - PFX_BLOCK_SIZE) / 2;
     int full_delay = half_delay * 2;
 
-    /* params[0]: Feedback — extended range for self-oscillation */
-    float base_fb = 0.1f + s->params[0] * 0.95f;
+    /* params[0]: Feedback — capped strictly below unity to prevent runaway */
+    float base_fb = 0.1f + s->params[0] * 0.85f;  /* 0.10..0.95 across knob range */
     /* params[1]: Filter CHARACTER — 0=HPF, 0.5=flat, 1=LPF */
     float filter_char = s->params[1];
     float level = 0.1f + s->params[2] * 1.1f;
 
-    /* Pressure extends feedback on top of knob baseline, capped at 1.08 */
+    /* Pressure shifts feedback ±0.07 — stays sub-unity at all times */
     float pr = pressure_relative(s->pressure, s->velocity, s->settle_counter);
-    float fb = base_fb + (pr - 0.5f) * 0.26f;
-    if (fb > 1.08f) fb = 1.08f;
+    float fb = base_fb + (pr - 0.5f) * 0.14f;
+    if (fb > 0.97f) fb = 0.97f;
     if (fb < 0.0f) fb = 0.0f;
 
     /* Read L at 1x (short tap), R at 2x (long tap) */

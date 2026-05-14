@@ -144,6 +144,26 @@ static void *fx_create(const char *module_dir, const char *config_json) {
             log_msg("pfx: siren %d: %s", i + 1,
                     inst->engine.slots[FX_BITCRUSH + i].sample.buf ? "loaded" : "not found");
         }
+
+        /* Restore last-used spring IR if saved */
+        FILE *sf = fopen("/data/UserData/schwung/spring_ir.txt", "r");
+        if (sf) {
+            char rel[512];
+            if (fgets(rel, sizeof(rel), sf)) {
+                /* Strip newline */
+                size_t rlen = strlen(rel);
+                while (rlen > 0 && (rel[rlen-1] == '\n' || rel[rlen-1] == '\r')) rel[--rlen] = '\0';
+                if (rlen > 0) {
+                    char fullpath[1024];
+                    snprintf(fullpath, sizeof(fullpath), "%s/%s",
+                             inst->engine.springs_dir, rel);
+                    pfx_engine_load_ir_into_slot(&inst->engine, FX_SPRING, fullpath);
+                    snprintf(inst->engine.spring_ir_rel, sizeof(inst->engine.spring_ir_rel), "%s", rel);
+                    log_msg("pfx: spring IR restored: %s", rel);
+                }
+            }
+            fclose(sf);
+        }
     }
 
     log_msg("pfx: Performance FX v2 engine initialized (32 unified FX)");
@@ -239,6 +259,11 @@ static void fx_set_param(void *instance, const char *key, const char *val) {
             char path[512];
             snprintf(path, sizeof(path), "%s/%s", e->springs_dir, val);
             pfx_engine_load_ir_into_slot(e, FX_SPRING, path);
+            /* Store relative path for get_param and persistence */
+            snprintf(e->spring_ir_rel, sizeof(e->spring_ir_rel), "%s", val);
+            /* Persist selection so it survives module restart */
+            FILE *f = fopen("/data/UserData/schwung/spring_ir.txt", "w");
+            if (f) { fputs(val, f); fclose(f); }
         }
         return;
     }
@@ -400,6 +425,10 @@ static int fx_get_param(void *instance, const char *key, char *buf, int buf_len)
     /* Spring IR filenames: all .aif/.wav files in springs_dir, newline-separated */
     if (strcmp(key, "ir_names") == 0)
         return pfx_get_ir_names_from_dir(e, buf, buf_len);
+
+    /* Currently loaded spring IR relative path */
+    if (strcmp(key, "spring_ir") == 0)
+        return snprintf(buf, buf_len, "%s", e->spring_ir_rel);
 
     return -1;
 }

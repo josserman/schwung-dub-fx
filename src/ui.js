@@ -243,6 +243,7 @@ let sirenAssignIdx = 0;
 let springAssignMode = false;
 let springAssignFiles = [];
 let springAssignIdx = 0;
+let currentSpringIR = '';  /* Display name of loaded spring IR (empty = FDN fallback) */
 
 /* Track routing */
 let trackRouted = [false, false, false, false];
@@ -552,6 +553,9 @@ function drawMainView() {
     print(96, 44, getKnobLabel(bank, 7), 1);
     print(0, 55, `${bpm.toFixed(0)} BPM`, 1);
     print(52, 55, `FX ${activeCount}`, 1);
+    if (currentSpringIR) {
+        print(92, 55, currentSpringIR.substring(0, 6), 1);
+    }
 
     /* Bypass overlay */
     if (bypassed) {
@@ -1369,6 +1373,12 @@ globalThis.init = function() {
     sendParam('tilt_eq', tiltEqValue.toFixed(3));
     sendParam('dj_filter', filterCutoffValue.toFixed(3));
 
+    /* Read back any spring IR restored from disk */
+    const springIR = getParam('spring_ir');
+    if (springIR && springIR.length > 0) {
+        currentSpringIR = springIR.replace(/\.(aif|wav)$/i, '').split('/').pop();
+    }
+
     ledInitPending = true;
     ledInitIndex = 0;
 };
@@ -1585,7 +1595,9 @@ globalThis.onMidiMessageInternal = function(data) {
                 if (springAssignFiles.length > 0) {
                     const filename = springAssignFiles[springAssignIdx];
                     sendParam('ir_assign', filename);
-                    showOverlay('Spring IR', filename.replace(/\.(aif|wav)$/i, ''), '');
+                    const displayName = filename.replace(/\.(aif|wav)$/i, '').split('/').pop();
+                    currentSpringIR = displayName;
+                    showOverlay('Spring IR', displayName, '');
                 }
                 exitSpringAssignMode();
                 return;

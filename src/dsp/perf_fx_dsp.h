@@ -379,6 +379,9 @@ typedef struct {
     char springs_file_names[4][256];
     int  springs_file_count;
 
+    /* Currently loaded spring IR relative path (e.g. "Accu 78/Accu78-Filter 1.aif") */
+    char spring_ir_rel[512];
+
 } perf_fx_engine_t;
 
 /* ---- API ---- */
