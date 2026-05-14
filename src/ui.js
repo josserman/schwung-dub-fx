@@ -575,10 +575,46 @@ function drawMainView() {
     }
 }
 
+/* Show a dedicated echo-time overlay with bar + nearest division + ms readout. */
+function showEchoTimeOverlay() {
+    overlayText = '__echo_time__';   /* sentinel — drawOverlay checks this */
+    overlayParam = '';
+    overlayValue = echoDivisionValue.toFixed(3);
+    overlayTimer = OVERLAY_DURATION;
+}
+
 function drawOverlay() {
     if (overlayTimer <= 0) return;
 
     clear_screen();
+
+    /* ---- Custom echo-time bar display ---- */
+    if (overlayText === '__echo_time__') {
+        const val = parseFloat(overlayValue);
+        const label = getDivisionLabel(val);
+        const ms = Math.round((60000 / bpm) * divisionToMult(val));
+        const msStr = ms >= 1000 ? (ms / 1000).toFixed(2) + 's' : ms + 'ms';
+
+        print(0, 0, 'ECHO TIME', 1);
+        draw_line(0, 10, SCREEN_W, 10, 1);
+
+        /* Bar — full available width (8px margin each side) */
+        const barW = Math.max(1, Math.floor(val * 112));
+        fill_rect(8, 18, barW, 12, 1);
+        draw_rect(8, 18, 112, 12, 1);
+
+        /* Division label centred below bar */
+        const labelX = Math.max(0, Math.floor((128 - label.length * 6) / 2));
+        print(labelX, 35, label, 1);
+
+        /* ms readout right-aligned */
+        const msX = Math.max(0, 128 - msStr.length * 6);
+        print(msX, 35, msStr, 1);
+
+        overlayTimer--;
+        return;
+    }
+
     print(0, 0, overlayText, 1);
     draw_line(0, 10, SCREEN_W, 10, 1);
 
@@ -1149,7 +1185,7 @@ function handleKnob(knobIndex, delta) {
         if (knobIndex === 0) {
             nudgeEchoDivision(delta);
             sendParam('echo_division', echoDivisionValue.toFixed(3));
-            showOverlay('Echo', 'Time', getDivisionLabel(echoDivisionValue));
+            showEchoTimeOverlay();
             return;
         }
         if (knobIndex === 1) {
@@ -1251,7 +1287,7 @@ function handleKnobPeek(knobNote) {
     }
     if (bank === BANK_ECHO) {
         if (knobNote === 0) {
-            showOverlay('Echo', 'Time', getDivisionLabel(echoDivisionValue));
+            showEchoTimeOverlay();
             return;
         }
         if (knobNote === 1) {
