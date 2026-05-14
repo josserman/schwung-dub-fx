@@ -552,7 +552,7 @@ static void test_render_with_active_fx(void) {
 
     /* Activate bitcrush (aggressive: produces audible difference) */
     pfx_activate(&e, FX_BITCRUSH, 1.0f);
-    pfx_set_param(&e, FX_BITCRUSH, 0, 0.1f); /* heavy crush */
+    pfx_set_param(&e, FX_BITCRUSH, 2, 0.9f); /* high volume to ensure audible difference */
 
     int16_t out_fx[256];
     pfx_engine_render(&e, out_fx, 128);

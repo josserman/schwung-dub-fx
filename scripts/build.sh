@@ -82,6 +82,7 @@ echo "Cross prefix: $CROSS_PREFIX"
 mkdir -p build
 mkdir -p dist/dub-fx
 mkdir -p dist/dub-fx/sirens
+mkdir -p dist/dub-fx/springs
 
 # Compile DSP plugin (C) and link everything
 echo "Compiling DSP plugin..."
@@ -116,6 +117,10 @@ chmod +x dist/dub-fx/dsp.so
 for siren in src/assets/sirens/*.wav; do
     [ -f "$siren" ] || continue
     cat "$siren" > "dist/dub-fx/sirens/$(basename "$siren")"
+done
+for spring in src/assets/springs/*.aif src/assets/springs/*.wav; do
+    [ -f "$spring" ] || continue
+    cat "$spring" > "dist/dub-fx/springs/$(basename "$spring")"
 done
 
 # Create tarball for release

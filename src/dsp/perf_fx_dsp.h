@@ -194,9 +194,22 @@ typedef struct {
 typedef struct {
     int16_t *buf;
     int length;      /* mono frames */
-    int pos;
+    float frac_pos;  /* fractional position (was int pos) */
     int playing;
 } sample_player_t;
+
+/* ---- IR Convolution engine ---- */
+#define PFX_IR_LEN 4096  /* max IR length in samples (~93ms at 44100 Hz), must be power of 2 */
+
+typedef struct {
+    float  *ir_l;        /* IR left channel (or mono), length = ir_len */
+    float  *ir_r;        /* IR right channel (NULL = mono) */
+    int     ir_len;      /* loaded length (0 = no IR loaded) */
+    int     ir_stereo;   /* 1 if stereo IR */
+    float  *hist_l;      /* circular input history [PFX_IR_LEN] */
+    float  *hist_r;
+    int     hist_pos;    /* circular buffer write position */
+} pfx_conv_t;
 
 /* ---- Unified FX slot ---- */
 typedef struct {
@@ -248,6 +261,9 @@ typedef struct {
 
     /* Siren/sample playback */
     sample_player_t sample;
+
+    /* IR Convolution (FX_SPRING only) */
+    pfx_conv_t conv;
 } pfx_slot_t;
 
 /* ---- Audio source modes ---- */
@@ -358,6 +374,11 @@ typedef struct {
     char siren_file_names[8][256];
     int  siren_file_count;
 
+    /* Spring reverb IR directory and filenames */
+    char springs_dir[512];
+    char springs_file_names[4][256];
+    int  springs_file_count;
+
 } perf_fx_engine_t;
 
 /* ---- API ---- */
@@ -368,6 +389,8 @@ void pfx_engine_load_vinyl_crackle(perf_fx_engine_t *e, const char *wav_path);
 void pfx_engine_load_sample_into_slot(perf_fx_engine_t *e, int slot, const char *wav_path);
 void pfx_engine_reload_sirens(perf_fx_engine_t *e);
 int  pfx_get_siren_names_from_dir(perf_fx_engine_t *e, char *buf, int buf_len);
+void pfx_engine_load_ir_into_slot(perf_fx_engine_t *e, int slot, const char *path);
+int  pfx_get_ir_names_from_dir(perf_fx_engine_t *e, char *buf, int buf_len);
 
 /* Process one block (128 frames). Reads from host audio, writes to out_lr */
 void pfx_engine_render(perf_fx_engine_t *e, int16_t *out_lr, int frames);

@@ -94,33 +94,33 @@ const SLOT_PARAM_NAMES = [
     ['Pattern','Gate',   'Revrse'],
     ['Feedbk', 'Filter', 'Mix'],
     ['Tone',   'WowFlt', 'Mix'],
-    /* Row 3: Filter Sweeps */
-    ['Speed',  'Reso',   'Depth'],
-    ['Speed',  'Reso',   'Depth'],
-    ['Speed',  'Reso',   'Width'],
-    ['Speed',  'Reso',   'Width'],
-    ['Speed',  'Reso',   'Mix'],
-    ['Depth',  'Feedbk', 'Mix'],
-    ['Depth',  'Feedbk', 'Mix'],
-    ['Depth',  'Center', 'Reso'],
-    /* Row 2: Space Throws — delays: Feedbk/Tone/Level; reverbs: Decay/Tone/Level */
-    ['Feedbk', 'Tone',   'Level'],
-    ['Feedbk', 'Tone',   'Level'],
-    ['Feedbk', 'Tone',   'Level'],
-    ['Feedbk', 'Tone',   'Level'],
-    ['Decay',  'Tone',   'Level'],
-    ['Decay',  'Tone',   'Level'],
-    ['Decay',  'Tone',   'Level'],
-    ['Decay',  'Tone',   'Level'],
-    /* Row 1: Distortion & Rhythm */
-    ['Filter', 'Tone',   'Mix'],
-    ['Filter', 'Tone',   'Mix'],
-    ['Drive',  'Tone',   'Mix'],
-    ['Speed',  'Shape',  'Depth'],
-    ['Rate',   'Depth',  'Wave'],
-    ['Tone',   'WowFlt', 'Mix'],
-    ['Noise',  'WowFlt', 'Tone'],
-    ['Speed',  'Tone',   'Mix']
+    /* Row 3: Echo (pad slots 8-15 → engine slots 16-19): Feedbk/Type/Level */
+    ['Feedbk', 'Type',   'Level'],
+    ['Feedbk', 'Type',   'Level'],
+    ['Feedbk', 'Type',   'Level'],
+    ['Feedbk', 'Type',   'Level'],
+    ['Feedbk', 'Type',   'Level'],
+    ['Feedbk', 'Type',   'Level'],
+    ['Feedbk', 'Type',   'Level'],
+    ['Feedbk', 'Type',   'Level'],
+    /* Row 2: Reverb (pad slots 16-23 → engine slots 20-23): Size/HFD/Level */
+    ['Size',   'HFD',    'Level'],
+    ['Size',   'HFD',    'Level'],
+    ['Size',   'HFD',    'Level'],
+    ['Size',   'HFD',    'Level'],
+    ['Size',   'HFD',    'Level'],
+    ['Size',   'HFD',    'Level'],
+    ['Size',   'HFD',    'Level'],
+    ['Size',   'HFD',    'Level'],
+    /* Row 1: Siren (pad slots 24-31): Rate/Depth/Vol */
+    ['Rate',   'Depth',  'Vol'],
+    ['Rate',   'Depth',  'Vol'],
+    ['Rate',   'Depth',  'Vol'],
+    ['Rate',   'Depth',  'Vol'],
+    ['Rate',   'Depth',  'Vol'],
+    ['Rate',   'Depth',  'Vol'],
+    ['Rate',   'Depth',  'Vol'],
+    ['Rate',   'Depth',  'Vol']
 ];
 
 const ISO_LABELS = ['High', 'Mid', 'Low', 'Sub'];
@@ -238,6 +238,11 @@ let sirenAssignMode = false;
 let sirenAssignPadSlot = -1;
 let sirenAssignFiles = [];
 let sirenAssignIdx = 0;
+
+/* Spring IR browser */
+let springAssignMode = false;
+let springAssignFiles = [];
+let springAssignIdx = 0;
 
 /* Track routing */
 let trackRouted = [false, false, false, false];
@@ -637,6 +642,56 @@ function exitSirenAssignMode() {
     sirenAssignPadSlot = -1;
 }
 
+function drawSpringBrowser() {
+    clear_screen();
+    print(0, 0, 'SPRING IR', 1);
+    draw_line(0, 10, SCREEN_W, 10, 1);
+
+    if (springAssignFiles.length === 0) {
+        print(0, 16, 'No IR files found', 1);
+        print(0, 28, 'Add .aif files to', 1);
+        print(0, 39, 'springs/ folder', 1);
+        print(0, 55, 'Back: exit', 1);
+        return;
+    }
+
+    const total = springAssignFiles.length;
+    const idx = springAssignIdx;
+    const startIdx = Math.max(0, Math.min(idx - 1, total - 3));
+    const endIdx = Math.min(total - 1, startIdx + 2);
+
+    for (let i = startIdx; i <= endIdx; i++) {
+        const y = 14 + (i - startIdx) * 13;
+        /* Strip .aif or .wav extension for display */
+        const name = springAssignFiles[i].replace(/\.(aif|wav)$/i, '');
+        const truncated = name.length > 19 ? name.substring(0, 18) + '~' : name;
+        if (i === idx) {
+            fill_rect(0, y - 1, 128, 12, 1);
+            print(2, y, truncated, 0);
+        } else {
+            print(2, y, truncated, 1);
+        }
+    }
+    print(0, 55, `${idx + 1}/${total}  CLK=LOAD BCK=EXIT`, 1);
+}
+
+function enterSpringAssignMode() {
+    springAssignIdx = 0;
+    try {
+        const names = getParam('ir_names');
+        springAssignFiles = (names && names.length > 0)
+            ? names.split('\n').filter(s => s.length > 0)
+            : [];
+    } catch (_) {
+        springAssignFiles = [];
+    }
+    springAssignMode = true;
+}
+
+function exitSpringAssignMode() {
+    springAssignMode = false;
+}
+
 function resetRepeatKnobs(slot) {
     /* Reset filter to center (bypass), gate to off, speed to normal */
     slotParams[slot][0] = 0.5;  /* filter = center */
@@ -687,13 +742,13 @@ function getDivisionLabel(value) {
 
 function getKnobLabel(bank, knobIndex) {
     if (bank === BANK_ECHO) {
-        return ['Time', 'Feed', 'Tone', 'Vol', 'Warm', 'D/W', '---', 'Filt'][knobIndex];
+        return ['Time', 'Feedbk', 'Type', 'Vol', 'Warm', 'D/W', '---', 'Filt'][knobIndex];
     }
     if (bank === BANK_REVERB) {
-        return ['Decay', 'Tone', 'Vol', '---', '---', '---', '---', 'Filt'][knobIndex];
+        return ['Size', 'HFD', 'Vol', '---', '---', '---', '---', 'Filt'][knobIndex];
     }
     if (bank === BANK_SIREN) {
-        return ['Tone', 'Drive', 'Vol', '---', '---', '---', '---', 'Filt'][knobIndex];
+        return ['Rate', 'Depth', 'Vol', '---', '---', '---', '---', 'Filt'][knobIndex];
     }
     return ['High', 'Mid', 'Low', 'Sub', 'Master', 'Echo', 'Verb', 'Filt'][knobIndex];
 }
@@ -872,6 +927,11 @@ function handlePadOn(note, velocity) {
     }
 
     if (shiftHeld) {
+        /* Shift+tap FX_SPRING pad (slot 23) = enter spring IR browser */
+        if (slot === 23) {
+            enterSpringAssignMode();
+            return;
+        }
         /* Shift+siren pad = enter file browser for that pad */
         if (SIREN_PAD_SLOTS.includes(slot)) {
             lastTouchedSlot = slot;
@@ -1070,11 +1130,11 @@ function handleKnob(knobIndex, delta) {
             return;
         }
         if (knobIndex === 1) {
-            setGroupedSlotParam(ECHO_SLOTS, 0, nudgeValue(slotParams[ECHO_SLOTS[0]][0], delta), 'Echo', 'Feedback');
+            setGroupedSlotParam(ECHO_SLOTS, 0, nudgeValue(slotParams[ECHO_SLOTS[0]][0], delta), 'Echo', 'Feedbk');
             return;
         }
         if (knobIndex === 2) {
-            setGroupedSlotParam(ECHO_SLOTS, 1, nudgeValue(slotParams[ECHO_SLOTS[0]][1], delta), 'Echo', 'Tone');
+            setGroupedSlotParam(ECHO_SLOTS, 1, nudgeValue(slotParams[ECHO_SLOTS[0]][1], delta), 'Echo', 'Type');
             return;
         }
         if (knobIndex === 3) {
@@ -1096,11 +1156,11 @@ function handleKnob(knobIndex, delta) {
         }
     } else if (bank === BANK_REVERB) {
         if (knobIndex === 0) {
-            setGroupedSlotParam(REVERB_SLOTS, 0, nudgeValue(slotParams[REVERB_SLOTS[0]][0], delta), 'Reverb', 'Decay');
+            setGroupedSlotParam(REVERB_SLOTS, 0, nudgeValue(slotParams[REVERB_SLOTS[0]][0], delta), 'Reverb', 'Size');
             return;
         }
         if (knobIndex === 1) {
-            setGroupedSlotParam(REVERB_SLOTS, 1, nudgeValue(slotParams[REVERB_SLOTS[0]][1], delta), 'Reverb', 'Tone');
+            setGroupedSlotParam(REVERB_SLOTS, 1, nudgeValue(slotParams[REVERB_SLOTS[0]][1], delta), 'Reverb', 'HFD');
             return;
         }
         if (knobIndex === 2) {
@@ -1115,11 +1175,11 @@ function handleKnob(knobIndex, delta) {
         }
     } else if (bank === BANK_SIREN) {
         if (knobIndex === 0) {
-            setGroupedSlotParam(SIREN_PAD_SLOTS.map(getEngineSlotForPad).filter(s => s >= 0), 0, nudgeValue(slotParams[24][0], delta), 'Siren', 'Tone');
+            setGroupedSlotParam(SIREN_PAD_SLOTS.map(getEngineSlotForPad).filter(s => s >= 0), 0, nudgeValue(slotParams[24][0], delta), 'Siren', 'Rate');
             return;
         }
         if (knobIndex === 1) {
-            setGroupedSlotParam(SIREN_PAD_SLOTS.map(getEngineSlotForPad).filter(s => s >= 0), 1, nudgeValue(slotParams[24][1], delta), 'Siren', 'Drive');
+            setGroupedSlotParam(SIREN_PAD_SLOTS.map(getEngineSlotForPad).filter(s => s >= 0), 1, nudgeValue(slotParams[24][1], delta), 'Siren', 'Depth');
             return;
         }
         if (knobIndex === 2) {
@@ -1166,11 +1226,11 @@ function handleKnobPeek(knobNote) {
             return;
         }
         if (knobNote === 1) {
-            showOverlay('Echo', 'Feedback', slotParams[ECHO_SLOTS[0]][0].toFixed(2));
+            showOverlay('Echo', 'Feedbk', slotParams[ECHO_SLOTS[0]][0].toFixed(2));
             return;
         }
         if (knobNote === 2) {
-            showOverlay('Echo', 'Tone', slotParams[ECHO_SLOTS[0]][1].toFixed(2));
+            showOverlay('Echo', 'Type', slotParams[ECHO_SLOTS[0]][1].toFixed(2));
             return;
         }
         if (knobNote === 3) {
@@ -1188,11 +1248,11 @@ function handleKnobPeek(knobNote) {
     }
     if (bank === BANK_REVERB) {
         if (knobNote === 0) {
-            showOverlay('Reverb', 'Decay', slotParams[REVERB_SLOTS[0]][0].toFixed(2));
+            showOverlay('Reverb', 'Size', slotParams[REVERB_SLOTS[0]][0].toFixed(2));
             return;
         }
         if (knobNote === 1) {
-            showOverlay('Reverb', 'Tone', slotParams[REVERB_SLOTS[0]][1].toFixed(2));
+            showOverlay('Reverb', 'HFD', slotParams[REVERB_SLOTS[0]][1].toFixed(2));
             return;
         }
         if (knobNote === 2) {
@@ -1202,11 +1262,11 @@ function handleKnobPeek(knobNote) {
     }
     if (bank === BANK_SIREN) {
         if (knobNote === 0) {
-            showOverlay('Siren', 'Tone', slotParams[24][0].toFixed(2));
+            showOverlay('Siren', 'Rate', slotParams[24][0].toFixed(2));
             return;
         }
         if (knobNote === 1) {
-            showOverlay('Siren', 'Drive', slotParams[24][1].toFixed(2));
+            showOverlay('Siren', 'Depth', slotParams[24][1].toFixed(2));
             return;
         }
         if (knobNote === 2) {
@@ -1333,7 +1393,9 @@ globalThis.tick = function() {
     }
 
     /* Render display */
-    if (sirenAssignMode) {
+    if (springAssignMode) {
+        drawSpringBrowser();
+    } else if (sirenAssignMode) {
         drawFileBrowser();
     } else if (overlayTimer > 0) {
         drawOverlay();
@@ -1416,6 +1478,10 @@ globalThis.onMidiMessageInternal = function(data) {
 
         /* Back - exit file browser or clean exit */
         if (d1 === MoveBack && d2 > 0) {
+            if (springAssignMode) {
+                exitSpringAssignMode();
+                return;
+            }
             if (sirenAssignMode) {
                 exitSirenAssignMode();
                 return;
@@ -1490,6 +1556,10 @@ globalThis.onMidiMessageInternal = function(data) {
         /* Jog wheel turn */
         if (d1 === MoveMainKnob) {
             const delta = decodeDelta(d2);
+            if (springAssignMode) {
+                springAssignIdx = Math.max(0, Math.min(springAssignFiles.length - 1, springAssignIdx + delta));
+                return;
+            }
             if (sirenAssignMode) {
                 sirenAssignIdx = Math.max(0, Math.min(sirenAssignFiles.length - 1, sirenAssignIdx + delta));
                 return;
@@ -1508,6 +1578,15 @@ globalThis.onMidiMessageInternal = function(data) {
 
         /* Jog click */
         if (d1 === MoveMainButton && d2 > 0) {
+            if (springAssignMode) {
+                if (springAssignFiles.length > 0) {
+                    const filename = springAssignFiles[springAssignIdx];
+                    sendParam('ir_assign', filename);
+                    showOverlay('Spring IR', filename.replace(/\.(aif|wav)$/i, ''), '');
+                }
+                exitSpringAssignMode();
+                return;
+            }
             if (sirenAssignMode) {
                 if (sirenAssignFiles.length > 0) {
                     const n = sirenAssignPadSlot - 24;

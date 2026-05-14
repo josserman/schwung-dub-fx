@@ -137,6 +137,9 @@ static void *fx_create(const char *module_dir, const char *config_json) {
         snprintf(inst->engine.sirens_dir, sizeof(inst->engine.sirens_dir),
                  "%s/sirens", module_dir);
         pfx_engine_reload_sirens(&inst->engine);
+
+        snprintf(inst->engine.springs_dir, sizeof(inst->engine.springs_dir),
+                 "%s/springs", module_dir);
         for (int i = 0; i < 8; i++) {
             log_msg("pfx: siren %d: %s", i + 1,
                     inst->engine.slots[FX_BITCRUSH + i].sample.buf ? "loaded" : "not found");
@@ -225,6 +228,20 @@ static void fx_set_param(void *instance, const char *key, const char *val) {
     if (strcmp(key, "repeat_rate") == 0) { e->repeat_rate = clampf(fval, 0, 1); return; }
     if (strcmp(key, "repeat_speed") == 0) { e->repeat_speed = clampf(fval, 0, 1); return; }
     if (strcmp(key, "echo_division") == 0) { e->echo_division = clampf(fval, 0, 1); return; }
+
+    /* Spring IR loading */
+    if (strcmp(key, "ir_path") == 0) {
+        pfx_engine_load_ir_into_slot(e, FX_SPRING, val);
+        return;
+    }
+    if (strcmp(key, "ir_assign") == 0) {
+        if (e->springs_dir[0]) {
+            char path[512];
+            snprintf(path, sizeof(path), "%s/%s", e->springs_dir, val);
+            pfx_engine_load_ir_into_slot(e, FX_SPRING, path);
+        }
+        return;
+    }
 
     /* Siren hot-reload */
     if (strcmp(key, "reload_sirens") == 0) {
@@ -379,6 +396,10 @@ static int fx_get_param(void *instance, const char *key, char *buf, int buf_len)
     /* Siren filenames: all .wav files in sirens_dir, newline-separated */
     if (strcmp(key, "siren_names") == 0)
         return pfx_get_siren_names_from_dir(e, buf, buf_len);
+
+    /* Spring IR filenames: all .aif/.wav files in springs_dir, newline-separated */
+    if (strcmp(key, "ir_names") == 0)
+        return pfx_get_ir_names_from_dir(e, buf, buf_len);
 
     return -1;
 }
