@@ -124,7 +124,17 @@ const SLOT_PARAM_NAMES = [
 ];
 
 const ISO_LABELS = ['High', 'Mid', 'Low', 'Sub'];
-const DIVISION_LABELS = ['4:1', '2:1', '1:1', '1/2', '1/4', '1/8', '1/16', '1/32'];
+/* Named beat multipliers for nearest-match display of continuous echo time.
+ * mult = 0.125 * 32^division01  (log scale: 0=1/32, ~0.60=1/4, 1.0=1:1) */
+const ECHO_TIME_DIVISIONS = [
+    [0.125, '1/32'], [0.167, '1/32T'], [0.188, 'D32'],
+    [0.25,  '1/16'], [0.333, '1/16T'], [0.375, 'D16'],
+    [0.5,   '1/8' ], [0.667, '1/8T' ], [0.75,  'D8' ],
+    [1.0,   '1/4' ], [1.333, '1/4T' ], [1.5,   'D4' ],
+    [2.0,   '1/2' ], [2.667, '1/2T' ], [3.0,   'D2' ],
+    [4.0,   '1:1' ]
+];
+const ECHO_TIME_STEP = 0.025;  /* ~40 jog clicks to sweep full range */
 const BANK_MIX = 0;
 const BANK_ECHO = 1;
 const BANK_REVERB = 2;
@@ -228,7 +238,7 @@ let lastTouchedSlot = -1;
 let lastRepeatSlot = 0; /* default to RPT 1/4 (slot 0) */
 let activeBank = BANK_MIX;
 let heldFxBank = -1;
-let echoDivisionValue = 4 / 7;  /* default: 1/4 note (index 4 of 8) */
+let echoDivisionValue = 0.60;   /* default: 1/4 note on log scale (0.125 * 32^0.60 ≈ 1.0 beat) */
 let filterCutoffValue = 0.8;
 let repeatSpeedValue = 0.5;
 let tiltEqValue = 0.5;
@@ -729,27 +739,34 @@ function getTimeLabel(rate01) {
     return ms + 'ms';
 }
 
-function getDivisionIndex(value) {
-    let idx = Math.round(value * 7.0);
-    if (idx < 0) idx = 0;
-    if (idx > 7) idx = 7;
-    return idx;
+/* Convert continuous 0..1 division value to beat multiplier (mirrors DSP). */
+function divisionToMult(value) {
+    if (value <= 0) return 0.125;
+    if (value >= 1) return 4.0;
+    return 0.125 * Math.pow(32, value);
 }
 
-function getDivisionValue(index) {
-    let idx = index;
-    if (idx < 0) idx = 0;
-    if (idx > 7) idx = 7;
-    return idx / 7.0;
-}
-
+/* Find the nearest named musical division and return a label.
+ * Shows exact name when within 4% of a landmark, otherwise prefixes ~. */
 function getDivisionLabel(value) {
-    return DIVISION_LABELS[getDivisionIndex(value)];
+    const mult = divisionToMult(value);
+    let best = ECHO_TIME_DIVISIONS[0];
+    let bestDist = Math.abs(mult - best[0]);
+    for (const d of ECHO_TIME_DIVISIONS) {
+        const dist = Math.abs(mult - d[0]);
+        if (dist < bestDist) { bestDist = dist; best = d; }
+    }
+    return bestDist < mult * 0.04 ? best[1] : `~${best[1]}`;
+}
+
+/* Bump echo time by one jog click (continuous, clamped 0..1). */
+function nudgeEchoDivision(delta) {
+    echoDivisionValue = Math.max(0, Math.min(1, echoDivisionValue + delta * ECHO_TIME_STEP));
 }
 
 function getKnobLabel(bank, knobIndex) {
     if (bank === BANK_ECHO) {
-        return ['Time', 'Feedbk', 'Type', 'Vol', 'Warm', 'D/W', '---', 'Filt'][knobIndex];
+        return ['Time', 'Feedbk', 'Filter', 'Vol', 'Warm', 'D/W', '---', 'Filt'][knobIndex];
     }
     if (bank === BANK_REVERB) {
         return ['Size', 'HFD', 'Vol', '---', '---', '---', '---', 'Filt'][knobIndex];
@@ -1130,8 +1147,7 @@ function handleKnob(knobIndex, delta) {
 
     if (bank === BANK_ECHO) {
         if (knobIndex === 0) {
-            const nextIdx = getDivisionIndex(echoDivisionValue) + (delta > 0 ? 1 : delta < 0 ? -1 : 0);
-            echoDivisionValue = getDivisionValue(nextIdx);
+            nudgeEchoDivision(delta);
             sendParam('echo_division', echoDivisionValue.toFixed(3));
             showOverlay('Echo', 'Time', getDivisionLabel(echoDivisionValue));
             return;
@@ -1141,7 +1157,7 @@ function handleKnob(knobIndex, delta) {
             return;
         }
         if (knobIndex === 2) {
-            setGroupedSlotParam(ECHO_SLOTS, 1, nudgeValue(slotParams[ECHO_SLOTS[0]][1], delta), 'Echo', 'Type');
+            setGroupedSlotParam(ECHO_SLOTS, 1, nudgeValue(slotParams[ECHO_SLOTS[0]][1], delta), 'Echo', 'Filter');
             return;
         }
         if (knobIndex === 3) {
@@ -1237,7 +1253,7 @@ function handleKnobPeek(knobNote) {
             return;
         }
         if (knobNote === 2) {
-            showOverlay('Echo', 'Type', slotParams[ECHO_SLOTS[0]][1].toFixed(2));
+            showOverlay('Echo', 'Filter', slotParams[ECHO_SLOTS[0]][1].toFixed(2));
             return;
         }
         if (knobNote === 3) {

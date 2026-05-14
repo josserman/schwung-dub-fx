@@ -129,14 +129,12 @@ int pfx_bpm_to_samples(float bpm, float division) {
 }
 
 static float pfx_echo_division_multiplier(float division01) {
-    /* 8 steps: 4:1 (4 bars), 2:1 (2 bars), 1:1 (1 bar),
-     *          1/2, 1/4, 1/8, 1/16, 1/32
-     * Values are beat multipliers (1.0 = 1 quarter note) */
-    static const float mults[] = { 16.0f, 8.0f, 4.0f, 2.0f, 1.0f, 0.5f, 0.25f, 0.125f };
-    int idx = (int)floorf(clampf(division01, 0.0f, 0.9999f) * 8.0f);
-    if (idx < 0) idx = 0;
-    if (idx > 7) idx = 7;
-    return mults[idx];
+    /* Continuous log sweep: 0.0 = 1/32 note (0.125 beats), 1.0 = 1 bar (4.0 beats)
+     * mult = 0.125 * 32^division01
+     * Landmarks (approx): 0.0=1/32, 0.40=1/8, 0.51=D8, 0.60=1/4, 0.80=1/2, 1.0=1:1 */
+    if (division01 <= 0.0f) return 0.125f;
+    if (division01 >= 1.0f) return 4.0f;
+    return 0.125f * powf(32.0f, division01);
 }
 
 /* ============================================================
@@ -1710,30 +1708,43 @@ static void process_delay_throw(pfx_slot_t *s, float *l, float *r,
     float dl, dr;
     delay_read(d, delay_samples, &dl, &dr);
 
-    /* SVF filter on feedback path: switches between HP (filter_char<0.5) and LP (filter_char>0.5) */
+    /* SVF filter on feedback path — four zones across filter_char 0..1:
+     *   0.00..0.28  HPF  thin/tape (thinnest at 0)
+     *   0.28..0.55  flat/bypass
+     *   0.55..0.72  LPF  warm→dark
+     *   0.72..1.00  BPF  telephone/resonant (most resonant at 1.0) */
     float wet_l, wet_r;
-    if (filter_char < 0.45f) {
-        /* HPF mode: removes lows, thinner/tape character */
-        float cutoff = 0.05f + (0.45f - filter_char) / 0.45f * 0.4f;  /* 0.05..0.45 */
+    if (filter_char < 0.28f) {
+        /* HPF: thin, airy, tape-like */
+        float t = 1.0f - filter_char / 0.28f;           /* 1 at knob=0, 0 at knob=0.28 */
+        float cutoff = 0.05f + t * 0.40f;               /* 0.05..0.45 */
         float f = cutoff_to_f(cutoff);
         float hp_l, hp_r;
         svf_process(&s->filter_l, dl, f, 0.5f, NULL, &hp_l, NULL);
         svf_process(&s->filter_r, dr, f, 0.5f, NULL, &hp_r, NULL);
-        wet_l = hp_l;
-        wet_r = hp_r;
+        wet_l = hp_l;  wet_r = hp_r;
+    } else if (filter_char > 0.72f) {
+        /* BPF: telephone/resonant bandpass, center ~300 Hz→2 kHz, Q rises */
+        float t = (filter_char - 0.72f) / 0.28f;        /* 0 at 0.72, 1 at 1.0 */
+        float center = 0.04f + t * 0.22f;               /* ~300 Hz → ~2 kHz */
+        float q = 0.4f + t * 1.6f;                      /* Q 0.4 → 2.0 */
+        float f = cutoff_to_f(center);
+        float bp_l, bp_r;
+        svf_process(&s->filter_l, dl, f, q, NULL, NULL, &bp_l);
+        svf_process(&s->filter_r, dr, f, q, NULL, NULL, &bp_r);
+        wet_l = bp_l;  wet_r = bp_r;
     } else if (filter_char > 0.55f) {
-        /* LPF mode: removes highs, dark character */
-        float cutoff = 0.9f - (filter_char - 0.55f) / 0.45f * 0.7f;  /* 0.9..0.2 */
+        /* LPF: warm to dark */
+        float t = (filter_char - 0.55f) / (0.72f - 0.55f);
+        float cutoff = 0.9f - t * 0.70f;                /* 0.9..0.2 */
         float f = cutoff_to_f(cutoff);
         float lp_l, lp_r;
         svf_process(&s->filter_l, dl, f, 0.5f, &lp_l, NULL, NULL);
         svf_process(&s->filter_r, dr, f, 0.5f, &lp_r, NULL, NULL);
-        wet_l = lp_l;
-        wet_r = lp_r;
+        wet_l = lp_l;  wet_r = lp_r;
     } else {
-        /* Flat/warm — bypass filter */
-        wet_l = dl;
-        wet_r = dr;
+        /* Flat/bypass */
+        wet_l = dl;  wet_r = dr;
     }
 
     /* Pressure-sensitive saturation: harder press = more saturation */
@@ -1781,28 +1792,37 @@ static void process_ping_pong_throw(pfx_slot_t *s, float *l, float *r,
     delay_read(d, half_delay, &dl_short, &dr_short);
     delay_read(d, full_delay, &dl_long, &dr_long);
 
-    /* SVF filter on feedback path: HP or LP based on filter_char */
+    /* SVF filter on feedback path — same four zones as delay throw:
+     *   0.00..0.28  HPF, 0.28..0.55  flat, 0.55..0.72  LPF, 0.72..1.00  BPF */
     float filt_in_l = dl_long;
     float filt_in_r = dl_short;
-    if (filter_char < 0.45f) {
-        float cutoff = 0.05f + (0.45f - filter_char) / 0.45f * 0.4f;
+    if (filter_char < 0.28f) {
+        float t = 1.0f - filter_char / 0.28f;
+        float cutoff = 0.05f + t * 0.40f;
         float f = cutoff_to_f(cutoff);
         float hp_l, hp_r;
         svf_process(&s->filter_l, filt_in_l, f, 0.5f, NULL, &hp_l, NULL);
         svf_process(&s->filter_r, filt_in_r, f, 0.5f, NULL, &hp_r, NULL);
-        d->fb_lp_l = hp_l;
-        d->fb_lp_r = hp_r;
+        d->fb_lp_l = hp_l;  d->fb_lp_r = hp_r;
+    } else if (filter_char > 0.72f) {
+        float t = (filter_char - 0.72f) / 0.28f;
+        float center = 0.04f + t * 0.22f;
+        float q = 0.4f + t * 1.6f;
+        float f = cutoff_to_f(center);
+        float bp_l, bp_r;
+        svf_process(&s->filter_l, filt_in_l, f, q, NULL, NULL, &bp_l);
+        svf_process(&s->filter_r, filt_in_r, f, q, NULL, NULL, &bp_r);
+        d->fb_lp_l = bp_l;  d->fb_lp_r = bp_r;
     } else if (filter_char > 0.55f) {
-        float cutoff = 0.9f - (filter_char - 0.55f) / 0.45f * 0.7f;
+        float t = (filter_char - 0.55f) / (0.72f - 0.55f);
+        float cutoff = 0.9f - t * 0.70f;
         float f = cutoff_to_f(cutoff);
         float lp_l, lp_r;
         svf_process(&s->filter_l, filt_in_l, f, 0.5f, &lp_l, NULL, NULL);
         svf_process(&s->filter_r, filt_in_r, f, 0.5f, &lp_r, NULL, NULL);
-        d->fb_lp_l = lp_l;
-        d->fb_lp_r = lp_r;
+        d->fb_lp_l = lp_l;  d->fb_lp_r = lp_r;
     } else {
-        d->fb_lp_l = filt_in_l;
-        d->fb_lp_r = filt_in_r;
+        d->fb_lp_l = filt_in_l;  d->fb_lp_r = filt_in_r;
     }
 
     float in_l = feeding ? *l : 0.0f;
