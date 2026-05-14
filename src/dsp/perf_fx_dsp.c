@@ -1876,7 +1876,7 @@ static void pfx_conv_process(pfx_conv_t *c, float in_l, float in_r,
 }
 
 /* Reverb: per-sample processing via pfx_revsc (Costello/Soundpipe FDN reverb).
- * params[0]: Room Size (0=tiny, 0.5=medium, 1=infinite)
+ * params[0]: Decay/Size (0=tight/small, 1=long/large)
  * params[1]: Filter character — four zones:
  *   0.00–0.28  HPF  (thin/airy reverb tail)
  *   0.28–0.55  flat/bypass
@@ -1915,7 +1915,23 @@ static void process_reverb_throw(pfx_slot_t *s, int slot, float *l, float *r,
     /* Spring: IR convolution if loaded, otherwise FDN with pre-delay */
     float out_l, out_r;
     if (slot == FX_SPRING && s->conv.ir_len > 0) {
-        pfx_conv_process(&s->conv, in_l, in_r, &out_l, &out_r);
+        /* Decay: params[0] scales active tap count (0=short ~15%, 1=full tail) */
+        float decay = room_size; /* room_size = params[0] */
+        pfx_conv_t *c = &s->conv;
+        int orig_len = c->ir_len;
+        int active_len = (int)(orig_len * (0.15f + decay * 0.85f));
+        if (active_len < 64) active_len = 64;
+        if (active_len > orig_len) active_len = orig_len;
+        c->ir_len = active_len;
+        pfx_conv_process(c, in_l, in_r, &out_l, &out_r);
+        c->ir_len = orig_len; /* restore so history buffer logic stays correct */
+
+        /* Width: params[3], 0=mono, 0.5=natural stereo, 1.0=extra wide */
+        float w = s->params[3] * 2.0f;
+        float m = (out_l + out_r) * 0.5f;
+        float s_side = (out_l - out_r) * 0.5f;
+        out_l = m + s_side * w;
+        out_r = m - s_side * w;
     } else {
         /* Spring: cut lows going in for that thin, metallic FDN character */
         if (slot == FX_SPRING) {
