@@ -43,7 +43,7 @@ static inline float pressure_relative(float pressure, float initial,
 
 #define PFX_SAMPLE_RATE     44100
 #define PFX_BLOCK_SIZE      128
-#define PFX_MAX_DELAY       (PFX_SAMPLE_RATE * 4)   /* 4 seconds */
+#define PFX_MAX_DELAY       (PFX_SAMPLE_RATE * 8)   /* 8 seconds — allows 4-bar echo at 120 BPM */
 #define PFX_REPEAT_BUF      (PFX_SAMPLE_RATE * 2)   /* 2 seconds per repeat slot */
 #define PFX_CAPTURE_BUF     (PFX_SAMPLE_RATE * 4)   /* 4 seconds shared capture */
 #define PFX_CHORUS_BUF      (PFX_SAMPLE_RATE * 1)   /* 1 second for chorus/flanger */
@@ -199,16 +199,16 @@ typedef struct {
 } sample_player_t;
 
 /* ---- IR Convolution engine ---- */
-#define PFX_IR_LEN 4096  /* max IR length in samples (~93ms at 44100 Hz), must be power of 2 */
+#define PFX_IR_LEN 16384  /* ~371ms at 44100 Hz — captures spring character; must be power of 2 */
 
 typedef struct {
-    float  *ir_l;        /* IR left channel (or mono), length = ir_len */
-    float  *ir_r;        /* IR right channel (NULL = mono) */
-    int     ir_len;      /* loaded length (0 = no IR loaded) */
-    int     ir_stereo;   /* 1 if stereo IR */
-    float  *hist_l;      /* circular input history [PFX_IR_LEN] */
+    float  *ir_l;         /* Reversed IR left (or mono), length = ir_len */
+    float  *ir_r;         /* Reversed IR right (NULL = mono) */
+    int     ir_len;       /* loaded length (0 = no IR loaded) */
+    int     ir_stereo;    /* 1 if stereo IR */
+    float  *hist_l;       /* Double-length history [2 * PFX_IR_LEN] for contiguous read */
     float  *hist_r;
-    int     hist_pos;    /* circular buffer write position */
+    int     hist_pos;     /* write position (0..ir_len-1) */
 } pfx_conv_t;
 
 /* ---- Unified FX slot ---- */

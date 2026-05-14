@@ -14,6 +14,7 @@
 #include <stdarg.h>
 #include <dirent.h>
 #include <ctype.h>
+#include <errno.h>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -128,10 +129,13 @@ int pfx_bpm_to_samples(float bpm, float division) {
 }
 
 static float pfx_echo_division_multiplier(float division01) {
-    static const float mults[] = { 4.0f, 2.0f, 1.0f, 0.5f, 0.25f, 0.125f };
-    int idx = (int)floorf(clampf(division01, 0.0f, 0.999f) * 6.0f);
+    /* 8 steps: 4:1 (4 bars), 2:1 (2 bars), 1:1 (1 bar),
+     *          1/2, 1/4, 1/8, 1/16, 1/32
+     * Values are beat multipliers (1.0 = 1 quarter note) */
+    static const float mults[] = { 16.0f, 8.0f, 4.0f, 2.0f, 1.0f, 0.5f, 0.25f, 0.125f };
+    int idx = (int)floorf(clampf(division01, 0.0f, 0.9999f) * 8.0f);
     if (idx < 0) idx = 0;
-    if (idx > 5) idx = 5;
+    if (idx > 7) idx = 7;
     return mults[idx];
 }
 
@@ -317,8 +321,8 @@ void pfx_engine_init(perf_fx_engine_t *e) {
             }
             /* Allocate convolution history buffers for FX_SPRING */
             if (i == FX_SPRING) {
-                s->conv.hist_l = (float *)calloc(PFX_IR_LEN, sizeof(float));
-                s->conv.hist_r = (float *)calloc(PFX_IR_LEN, sizeof(float));
+                s->conv.hist_l = (float *)calloc(2 * PFX_IR_LEN, sizeof(float));
+                s->conv.hist_r = (float *)calloc(2 * PFX_IR_LEN, sizeof(float));
                 s->conv.hist_pos = 0;
                 s->conv.ir_l = NULL;
                 s->conv.ir_r = NULL;
@@ -450,159 +454,149 @@ static int16_t *pfx_load_wav_mono(const char *wav_path, int *frames_out) {
 
 /* Load an AIFF or WAV file, sum to mono float, normalize, truncate to max_frames.
  * Returns allocated float buffer (caller must free) or NULL on failure. */
-static float *pfx_load_ir_float(const char *path, int max_frames, int *out_len) {
+/* Load AIFF or WAV, return up to max_frames of float audio.
+ * Sets *out_len to actual frames loaded.
+ * *out_r is allocated and filled if stereo; set to NULL for mono files.
+ * Caller must free *out_l (and *out_r if non-NULL). */
+static float *pfx_load_ir_stereo(const char *path, int max_frames,
+                                  float **out_r, int *out_len) {
+    *out_r = NULL;
+    if (out_len) *out_len = 0;
+
     FILE *f = fopen(path, "rb");
     if (!f) return NULL;
 
     uint8_t header[12];
     if (fread(header, 1, 12, f) != 12) { fclose(f); return NULL; }
 
-    /* Detect AIFF: FORM....AIFF */
-    int is_aiff = (header[0] == 'F' && header[1] == 'O' && header[2] == 'R' && header[3] == 'M' &&
-                   header[8] == 'A' && header[9] == 'I' && header[10] == 'F' && header[11] == 'F');
-    /* Detect WAV: RIFF....WAVE */
-    int is_wav  = (header[0] == 'R' && header[1] == 'I' && header[2] == 'F' && header[3] == 'F' &&
-                   header[8] == 'W' && header[9] == 'A' && header[10] == 'V' && header[11] == 'E');
-
+    int is_aiff = (header[0]=='F' && header[1]=='O' && header[2]=='R' && header[3]=='M' &&
+                   header[8]=='A' && header[9]=='I' && header[10]=='F' && header[11]=='F');
+    int is_wav  = (header[0]=='R' && header[1]=='I' && header[2]=='F' && header[3]=='F' &&
+                   header[8]=='W' && header[9]=='A' && header[10]=='V' && header[11]=='E');
     if (!is_aiff && !is_wav) { fclose(f); return NULL; }
 
-    float *result = NULL;
+    int channels = 0, bits = 0;
+    long num_frames_file = 0;
+    long audio_data_offset = 0;
 
     if (is_aiff) {
-        /* Parse AIFF chunks */
-        int channels = 0, bits = 0;
-        long num_frames_aiff = 0;
-        long ssnd_offset = 0;
         int found_comm = 0, found_ssnd = 0;
-
         while (!found_ssnd) {
             uint8_t chdr[8];
             if (fread(chdr, 1, 8, f) != 8) break;
-            uint32_t csize = ((uint32_t)chdr[4] << 24) | ((uint32_t)chdr[5] << 16) |
-                             ((uint32_t)chdr[6] << 8)  |  (uint32_t)chdr[7];
-
-            if (chdr[0]=='C' && chdr[1]=='O' && chdr[2]=='M' && chdr[3]=='M') {
-                /* COMM chunk: 2 channels + 4 numFrames + 2 sampleSize + 10 sampleRate */
+            uint32_t csize = ((uint32_t)chdr[4]<<24)|((uint32_t)chdr[5]<<16)|
+                             ((uint32_t)chdr[6]<<8)|(uint32_t)chdr[7];
+            if (chdr[0]=='C'&&chdr[1]=='O'&&chdr[2]=='M'&&chdr[3]=='M') {
                 uint8_t comm[18];
-                int rd = (int)fread(comm, 1, 18, f);
-                if (rd < 18) break;
-                channels = (comm[0] << 8) | comm[1];
-                num_frames_aiff = ((uint32_t)comm[2] << 24) | ((uint32_t)comm[3] << 16) |
-                                  ((uint32_t)comm[4] << 8)  |  (uint32_t)comm[5];
-                bits = (comm[6] << 8) | comm[7];
-                /* Skip rest of COMM if larger */
+                if (fread(comm, 1, 18, f) != 18) break;
+                channels = (comm[0]<<8)|comm[1];
+                num_frames_file = ((uint32_t)comm[2]<<24)|((uint32_t)comm[3]<<16)|
+                                  ((uint32_t)comm[4]<<8)|(uint32_t)comm[5];
+                bits = (comm[6]<<8)|comm[7];
                 if (csize > 18) fseek(f, csize - 18, SEEK_CUR);
                 found_comm = 1;
-            } else if (chdr[0]=='S' && chdr[1]=='S' && chdr[2]=='N' && chdr[3]=='D') {
-                /* SSND chunk: 8 bytes offset/blockSize header, then audio data */
+            } else if (chdr[0]=='S'&&chdr[1]=='S'&&chdr[2]=='N'&&chdr[3]=='D') {
                 uint8_t ssnd_hdr[8];
                 if (fread(ssnd_hdr, 1, 8, f) != 8) break;
-                ssnd_offset = ftell(f);
+                audio_data_offset = ftell(f);
                 found_ssnd = 1;
-                (void)csize;
             } else {
-                /* Skip unknown chunk (pad to even size) */
-                long skip = (long)csize + (csize & 1);
-                fseek(f, skip, SEEK_CUR);
+                fseek(f, (long)csize + (csize & 1), SEEK_CUR);
             }
         }
-
         if (!found_comm || !found_ssnd || channels < 1 || (bits != 16 && bits != 24)) {
             fclose(f); return NULL;
         }
-
-        fseek(f, ssnd_offset, SEEK_SET);
-
-        int frames = (int)num_frames_aiff;
-        if (frames > max_frames) frames = max_frames;
-
-        result = (float *)malloc(frames * sizeof(float));
-        if (!result) { fclose(f); return NULL; }
-
-        int bytes_per_sample = bits / 8;
-        for (int i = 0; i < frames; i++) {
-            float sum = 0.0f;
-            for (int ch = 0; ch < channels; ch++) {
-                if (bits == 24) {
-                    uint8_t b3[3];
-                    if (fread(b3, 1, 3, f) != 3) goto aiff_done;
-                    int32_t raw = ((int32_t)(int8_t)b3[0] << 16) | (b3[1] << 8) | b3[2];
-                    sum += (float)raw / 8388608.0f;
-                } else { /* 16-bit */
-                    uint8_t b2[2];
-                    if (fread(b2, 1, 2, f) != 2) goto aiff_done;
-                    int16_t raw = (int16_t)((b2[0] << 8) | b2[1]);
-                    sum += (float)raw / 32768.0f;
-                }
-            }
-            result[i] = sum / (float)channels;
-        }
-        aiff_done:
-        if (out_len) *out_len = frames;
-
     } else { /* WAV */
-        int channels = 0, bits = 0, data_size = 0;
         int found_fmt = 0, found_data = 0;
-
         while (!found_data) {
             uint8_t chdr[8];
             if (fread(chdr, 1, 8, f) != 8) break;
-            uint32_t csize = chdr[4] | (chdr[5] << 8) | (chdr[6] << 16) | ((uint32_t)chdr[7] << 24);
-            if (chdr[0]=='f' && chdr[1]=='m' && chdr[2]=='t' && chdr[3]==' ') {
+            uint32_t csize = chdr[4]|(chdr[5]<<8)|(chdr[6]<<16)|((uint32_t)chdr[7]<<24);
+            if (chdr[0]=='f'&&chdr[1]=='m'&&chdr[2]=='t'&&chdr[3]==' ') {
                 uint8_t fmt[16];
                 if (fread(fmt, 1, 16, f) != 16) break;
-                channels = fmt[2] | (fmt[3] << 8);
-                bits = fmt[14] | (fmt[15] << 8);
+                channels = fmt[2]|(fmt[3]<<8);
+                bits = fmt[14]|(fmt[15]<<8);
                 found_fmt = 1;
                 if (csize > 16) fseek(f, csize - 16, SEEK_CUR);
-            } else if (chdr[0]=='d' && chdr[1]=='a' && chdr[2]=='t' && chdr[3]=='a') {
-                data_size = (int)csize;
+            } else if (chdr[0]=='d'&&chdr[1]=='a'&&chdr[2]=='t'&&chdr[3]=='a') {
+                num_frames_file = (long)csize / ((bits/8) * channels);
+                audio_data_offset = ftell(f);
                 found_data = 1;
             } else {
                 fseek(f, csize, SEEK_CUR);
             }
         }
-
-        if (!found_fmt || !found_data || channels < 1 || bits != 16) { fclose(f); return NULL; }
-
-        int total_samples = data_size / 2;
-        int frames = total_samples / channels;
-        if (frames > max_frames) frames = max_frames;
-
-        result = (float *)malloc(frames * sizeof(float));
-        if (!result) { fclose(f); return NULL; }
-
-        for (int i = 0; i < frames; i++) {
-            float sum = 0.0f;
-            for (int ch = 0; ch < channels; ch++) {
-                uint8_t b2[2];
-                if (fread(b2, 1, 2, f) != 2) goto wav_done;
-                int16_t raw = (int16_t)(b2[0] | (b2[1] << 8));
-                sum += (float)raw / 32768.0f;
-            }
-            result[i] = sum / (float)channels;
+        if (!found_fmt || !found_data || channels < 1 || bits != 16) {
+            fclose(f); return NULL;
         }
-        wav_done:
-        if (out_len) *out_len = frames;
     }
 
+    fseek(f, audio_data_offset, SEEK_SET);
+
+    int frames = (int)num_frames_file;
+    if (frames > max_frames) frames = max_frames;
+    if (frames <= 0) { fclose(f); return NULL; }
+
+    int stereo = (channels >= 2);
+    float *buf_l = (float *)malloc(frames * sizeof(float));
+    float *buf_r = stereo ? (float *)malloc(frames * sizeof(float)) : NULL;
+    if (!buf_l || (stereo && !buf_r)) {
+        free(buf_l); free(buf_r); fclose(f); return NULL;
+    }
+
+    int bps = bits / 8;
+    int ok = 1;
+    for (int i = 0; i < frames && ok; i++) {
+        float samples[8];
+        for (int ch = 0; ch < channels && ok; ch++) {
+            float s = 0.0f;
+            if (bits == 24) {
+                uint8_t b[3];
+                if (fread(b, 1, 3, f) != 3) { ok = 0; break; }
+                /* AIFF: big-endian; WAV: little-endian */
+                int32_t raw = is_aiff
+                    ? ((int32_t)(int8_t)b[0]<<16)|(b[1]<<8)|b[2]
+                    : (b[0]|(b[1]<<8)|((int32_t)(int8_t)b[2]<<16));
+                s = (float)raw / 8388608.0f;
+            } else {
+                uint8_t b[2];
+                if (fread(b, 1, 2, f) != 2) { ok = 0; break; }
+                int16_t raw = is_aiff
+                    ? (int16_t)((b[0]<<8)|b[1])
+                    : (int16_t)(b[0]|(b[1]<<8));
+                s = (float)raw / 32768.0f;
+            }
+            if (ch < 8) samples[ch] = s;
+            (void)bps;
+        }
+        if (!ok) { frames = i; break; }
+        buf_l[i] = samples[0];
+        if (stereo) buf_r[i] = samples[1];
+    }
     fclose(f);
 
-    if (!result || (out_len && *out_len == 0)) { free(result); return NULL; }
+    if (frames == 0) { free(buf_l); free(buf_r); return NULL; }
 
-    /* Normalize peak to 1.0 */
-    int len = out_len ? *out_len : 0;
+    /* Normalize peak across both channels */
     float peak = 0.0f;
-    for (int i = 0; i < len; i++) {
-        float a = fabsf(result[i]);
+    for (int i = 0; i < frames; i++) {
+        float a = fabsf(buf_l[i]);
         if (a > peak) peak = a;
+        if (stereo) { a = fabsf(buf_r[i]); if (a > peak) peak = a; }
     }
     if (peak > 0.001f) {
-        float inv_peak = 1.0f / peak;
-        for (int i = 0; i < len; i++) result[i] *= inv_peak;
+        float inv = 1.0f / peak;
+        for (int i = 0; i < frames; i++) {
+            buf_l[i] *= inv;
+            if (stereo) buf_r[i] *= inv;
+        }
     }
 
-    return result;
+    if (out_len) *out_len = frames;
+    if (stereo) *out_r = buf_r;
+    return buf_l;
 }
 
 /* Load an IR file into the FX_SPRING slot's convolution engine. */
@@ -611,63 +605,108 @@ void pfx_engine_load_ir_into_slot(perf_fx_engine_t *e, int slot, const char *pat
     pfx_slot_t *s = &e->slots[slot];
 
     int ir_len = 0;
-    float *ir = pfx_load_ir_float(path, PFX_IR_LEN, &ir_len);
-    if (!ir || ir_len == 0) {
+    float *ir_r_raw = NULL;
+    float *ir_l = pfx_load_ir_stereo(path, PFX_IR_LEN, &ir_r_raw, &ir_len);
+    if (!ir_l || ir_len == 0) {
+        free(ir_l); free(ir_r_raw);
         engine_log(e, "pfx: IR load failed: %s", path);
         return;
     }
 
-    /* Ensure hist buffers are allocated */
+    /* Reverse the IR in-place for vectorizable dot-product convolution */
+    for (int i = 0, j = ir_len - 1; i < j; i++, j--) {
+        float tmp = ir_l[i]; ir_l[i] = ir_l[j]; ir_l[j] = tmp;
+    }
+    if (ir_r_raw) {
+        for (int i = 0, j = ir_len - 1; i < j; i++, j--) {
+            float tmp = ir_r_raw[i]; ir_r_raw[i] = ir_r_raw[j]; ir_r_raw[j] = tmp;
+        }
+    }
+
+    /* Ensure double-length history buffers exist */
     if (!s->conv.hist_l) {
-        s->conv.hist_l = (float *)calloc(PFX_IR_LEN, sizeof(float));
-        s->conv.hist_r = (float *)calloc(PFX_IR_LEN, sizeof(float));
+        s->conv.hist_l = (float *)calloc(2 * PFX_IR_LEN, sizeof(float));
+        s->conv.hist_r = (float *)calloc(2 * PFX_IR_LEN, sizeof(float));
         s->conv.hist_pos = 0;
     }
 
-    /* Swap in new IR (mono — summed to mono in loader) */
     free(s->conv.ir_l);
     free(s->conv.ir_r);
-    s->conv.ir_l = ir;
-    s->conv.ir_r = NULL;
-    s->conv.ir_stereo = 0;
+    s->conv.ir_l = ir_l;
+    s->conv.ir_r = ir_r_raw;          /* NULL if mono file */
+    s->conv.ir_stereo = (ir_r_raw != NULL) ? 1 : 0;
     s->conv.ir_len = ir_len;
 
     /* Clear history */
-    if (s->conv.hist_l) memset(s->conv.hist_l, 0, PFX_IR_LEN * sizeof(float));
-    if (s->conv.hist_r) memset(s->conv.hist_r, 0, PFX_IR_LEN * sizeof(float));
+    if (s->conv.hist_l) memset(s->conv.hist_l, 0, 2 * PFX_IR_LEN * sizeof(float));
+    if (s->conv.hist_r) memset(s->conv.hist_r, 0, 2 * PFX_IR_LEN * sizeof(float));
     s->conv.hist_pos = 0;
 
-    engine_log(e, "pfx: IR loaded: %s (%d samples)", path, ir_len);
+    engine_log(e, "pfx: IR loaded: %s (%d samples, %s)", path, ir_len,
+               ir_r_raw ? "stereo" : "mono");
 }
 
 /* Scan springs_dir for .aif/.wav files, return newline-separated sorted list. */
+static int is_audio_ext(const char *name) {
+    size_t len = strlen(name);
+    if (len < 5) return 0;
+    const char *ext = name + len - 4;
+    if (ext[0] != '.') return 0;
+    int is_aif = (tolower((unsigned char)ext[1]) == 'a' &&
+                  tolower((unsigned char)ext[2]) == 'i' &&
+                  tolower((unsigned char)ext[3]) == 'f');
+    int is_wav = (tolower((unsigned char)ext[1]) == 'w' &&
+                  tolower((unsigned char)ext[2]) == 'a' &&
+                  tolower((unsigned char)ext[3]) == 'v');
+    return is_aif || is_wav;
+}
+
 int pfx_get_ir_names_from_dir(perf_fx_engine_t *e, char *buf, int buf_len) {
     if (buf_len > 0) buf[0] = '\0';
-    if (!e->springs_dir[0]) return 0;
-    DIR *dir = opendir(e->springs_dir);
-    if (!dir) return 0;
+    engine_log(e, "pfx: ir scan: dir='%s' buf_len=%d", e->springs_dir, buf_len);
 
-    char *names[256];
+    if (!e->springs_dir[0]) { engine_log(e, "pfx: ir scan: empty springs_dir"); return 0; }
+    DIR *top = opendir(e->springs_dir);
+    if (!top) { engine_log(e, "pfx: ir scan: opendir failed errno=%d", errno); return 0; }
+
+    char *names[512];
     int count = 0;
     struct dirent *ent;
-    while ((ent = readdir(dir)) != NULL && count < 256) {
-        const char *name = ent->d_name;
-        size_t len = strlen(name);
-        if (len < 5) continue;
-        const char *ext = name + len - 4;
-        if (ext[0] != '.') continue;
-        /* Accept .aif, .wav (case insensitive) */
-        int is_aif = (tolower((unsigned char)ext[1]) == 'a' &&
-                      tolower((unsigned char)ext[2]) == 'i' &&
-                      tolower((unsigned char)ext[3]) == 'f');
-        int is_wav = (tolower((unsigned char)ext[1]) == 'w' &&
-                      tolower((unsigned char)ext[2]) == 'a' &&
-                      tolower((unsigned char)ext[3]) == 'v');
-        if (!is_aif && !is_wav) continue;
-        names[count] = strdup(name);
-        if (names[count]) count++;
+
+    /* Two-pass: first collect top-level audio files, then recurse one level
+     * into subdirectories.  Relative paths are returned so the UI can show
+     * the tank name (e.g. "Accu 78/Accu78-Filter 1.aif"). */
+    while ((ent = readdir(top)) != NULL && count < 512) {
+        if (ent->d_name[0] == '.') continue;
+
+        /* Check if it's a plain file first */
+        if (is_audio_ext(ent->d_name)) {
+            names[count] = strdup(ent->d_name);
+            if (names[count]) count++;
+            continue;
+        }
+
+        /* Try opening it as a subdirectory */
+        char subpath[600];
+        snprintf(subpath, sizeof(subpath), "%s/%s", e->springs_dir, ent->d_name);
+        DIR *sub = opendir(subpath);
+        if (!sub) continue;
+
+        struct dirent *sent;
+        while ((sent = readdir(sub)) != NULL && count < 512) {
+            if (sent->d_name[0] == '.') continue;
+            if (!is_audio_ext(sent->d_name)) continue;
+            /* Store as "SubDir/filename.aif" */
+            char rel[600];
+            snprintf(rel, sizeof(rel), "%s/%s", ent->d_name, sent->d_name);
+            names[count] = strdup(rel);
+            if (names[count]) count++;
+        }
+        closedir(sub);
     }
-    closedir(dir);
+    closedir(top);
+    engine_log(e, "pfx: ir scan: found %d files", count);
+
     if (count == 0) return 0;
 
     qsort(names, count, sizeof(char *), cmp_str);
@@ -1666,7 +1705,7 @@ static void process_delay_throw(pfx_slot_t *s, float *l, float *r,
     float b = bpm < 20.0f ? 120.0f : bpm;
     int delay_samples = (int)(60.0f / b * pfx_echo_division_multiplier(division01) * PFX_SAMPLE_RATE);
     if (delay_samples < 100) delay_samples = 100;
-    if (delay_samples > PFX_SAMPLE_RATE) delay_samples = PFX_SAMPLE_RATE;
+    if (delay_samples > PFX_MAX_DELAY - PFX_BLOCK_SIZE) delay_samples = PFX_MAX_DELAY - PFX_BLOCK_SIZE;
 
     float dl, dr;
     delay_read(d, delay_samples, &dl, &dr);
@@ -1721,7 +1760,8 @@ static void process_ping_pong_throw(pfx_slot_t *s, float *l, float *r,
     float b = bpm < 20.0f ? 120.0f : bpm;
     int half_delay = (int)(60.0f / b * pfx_echo_division_multiplier(division01) * PFX_SAMPLE_RATE);
     if (half_delay < 100) half_delay = 100;
-    if (half_delay > PFX_SAMPLE_RATE / 2) half_delay = PFX_SAMPLE_RATE / 2;
+    /* full_delay = half_delay * 2; ensure both fit in buffer */
+    if (half_delay > (PFX_MAX_DELAY - PFX_BLOCK_SIZE) / 2) half_delay = (PFX_MAX_DELAY - PFX_BLOCK_SIZE) / 2;
     int full_delay = half_delay * 2;
 
     /* params[0]: Feedback — extended range for self-oscillation */
@@ -1778,28 +1818,41 @@ static void process_ping_pong_throw(pfx_slot_t *s, float *l, float *r,
     *r += dr_long  * level;
 }
 
-/* Convolution reverb: per-sample direct convolution using circular history buffer.
- * PFX_IR_LEN must be a power of 2 for the mask trick. */
+/* Convolution reverb using double-buffer trick for contiguous NEON-vectorizable access.
+ * IR is stored reversed so the dot product reads both arrays sequentially.
+ * hist[hist_pos] and hist[hist_pos + ir_len] are written simultaneously, so reading
+ * hist[hist_pos + 1 .. hist_pos + ir_len] is always contiguous (no wraparound). */
 static void pfx_conv_process(pfx_conv_t *c, float in_l, float in_r,
                               float *out_l, float *out_r) {
     if (!c->ir_l || c->ir_len == 0 || !c->hist_l || !c->hist_r) {
         *out_l = 0.0f; *out_r = 0.0f; return;
     }
-    /* Write into circular history */
-    c->hist_l[c->hist_pos] = in_l;
-    c->hist_r[c->hist_pos] = in_r;
-    float sum_l = 0.0f, sum_r = 0.0f;
-    int pos = c->hist_pos;
-    int mask = PFX_IR_LEN - 1;
     int len = c->ir_len;
+    int pos = c->hist_pos;
+
+    /* Write at pos and pos+len (double-buffer — keeps contiguous read window) */
+    c->hist_l[pos]       = in_l;
+    c->hist_l[pos + len] = in_l;
+    c->hist_r[pos]       = in_r;
+    c->hist_r[pos + len] = in_r;
+
+    /* Dot product: ir_rev[0..len-1] · hist[pos+1 .. pos+len]
+     * Both arrays are contiguous → GCC -Ofast auto-vectorizes with NEON FMLA */
+    const float *hl = c->hist_l + pos + 1;
+    const float *hr = c->hist_r + pos + 1;
+    const float *ir_l = c->ir_l;
+    const float *ir_r = c->ir_stereo ? c->ir_r : c->ir_l;
+    float sum_l = 0.0f, sum_r = 0.0f;
     for (int k = 0; k < len; k++) {
-        int idx = (pos - k) & mask;
-        sum_l += c->ir_l[k] * c->hist_l[idx];
-        sum_r += (c->ir_stereo ? c->ir_r[k] : c->ir_l[k]) * c->hist_r[idx];
+        sum_l += ir_l[k] * hl[k];
+        sum_r += ir_r[k] * hr[k];
     }
     *out_l = sum_l;
     *out_r = sum_r;
-    c->hist_pos = (c->hist_pos + 1) & mask;
+
+    /* Advance write position — works for any ir_len, not just powers of 2 */
+    c->hist_pos = pos + 1;
+    if (c->hist_pos >= len) c->hist_pos = 0;
 }
 
 /* Reverb: per-sample processing via pfx_revsc (Costello/Soundpipe FDN reverb).
@@ -2135,14 +2188,18 @@ static void process_sample_player(pfx_slot_t *s, float *l, float *r) {
         return;
     }
 
-    /* params[0]: LFO Rate (0=no LFO, 0.5=medium, 1=fast vibrato)
-     * params[1]: LFO Depth (0=none, 1=max pitch swing ±20%)
-     * params[2]: Volume */
-    float lfo_rate  = s->params[0] * 12.0f;   /* 0-12 Hz */
-    float lfo_depth = s->params[1] * 0.2f;    /* ±20% pitch */
-    float level     = 0.5f + s->params[2] * 1.5f;
+    /* params[0]: LFO Rate  (0=off, 1=fast ~12 Hz)
+     * params[1]: LFO Depth (0=none, 1=max pitch swing ±30%)
+     * params[2]: Volume    (0=quiet, 0.5=full level, 1=boosted) */
+    float lfo_rate  = s->params[0] * 12.0f;   /* 0–12 Hz */
+    float lfo_depth = s->params[1] * 0.3f;    /* ±30% pitch range */
+    float level     = 2.0f + s->params[2] * 4.0f; /* 2.0–6.0: loud by default */
 
-    /* LFO modulation */
+    /* Pressure modulates volume on top of knob */
+    float pr = pressure_relative(s->pressure, s->velocity, s->settle_counter);
+    level *= (0.6f + pr * 0.8f);   /* 0.6–1.4× multiplier */
+
+    /* LFO pitch modulation */
     float pitch = 1.0f + lfo_depth * sinf(s->trem_lfo_phase * 2.0f * (float)M_PI);
     s->trem_lfo_phase += lfo_rate / (float)PFX_SAMPLE_RATE;
     if (s->trem_lfo_phase >= 1.0f) s->trem_lfo_phase -= 1.0f;
@@ -2152,7 +2209,7 @@ static void process_sample_player(pfx_slot_t *s, float *l, float *r) {
     float frac = s->sample.frac_pos - (float)idx;
     float s0 = (float)s->sample.buf[idx] / 32768.0f;
     float s1 = (idx + 1 < s->sample.length) ? (float)s->sample.buf[idx + 1] / 32768.0f : 0.0f;
-    float sample = s0 + frac * (s1 - s0);
+    float sample_val = s0 + frac * (s1 - s0);
 
     s->sample.frac_pos += pitch;
     if ((int)s->sample.frac_pos >= s->sample.length) {
@@ -2160,12 +2217,8 @@ static void process_sample_player(pfx_slot_t *s, float *l, float *r) {
         s->active = 0;
     }
 
-    /* Apply tone filter to output */
-    float filtered;
-    svf_process(&s->sat_filter_l, sample, cutoff_to_f(0.3f), 0.55f, &filtered, NULL, NULL);
-
-    *l += filtered * level;
-    *r += filtered * level;
+    *l += sample_val * level;
+    *r += sample_val * level;
 }
 
 /* ============================================================

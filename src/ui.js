@@ -124,7 +124,7 @@ const SLOT_PARAM_NAMES = [
 ];
 
 const ISO_LABELS = ['High', 'Mid', 'Low', 'Sub'];
-const DIVISION_LABELS = ['1:1', '1/2', '1/4', '1/8', '1/16', '1/32'];
+const DIVISION_LABELS = ['4:1', '2:1', '1:1', '1/2', '1/4', '1/8', '1/16', '1/32'];
 const BANK_MIX = 0;
 const BANK_ECHO = 1;
 const BANK_REVERB = 2;
@@ -228,7 +228,7 @@ let lastTouchedSlot = -1;
 let lastRepeatSlot = 0; /* default to RPT 1/4 (slot 0) */
 let activeBank = BANK_MIX;
 let heldFxBank = -1;
-let echoDivisionValue = 0.4;
+let echoDivisionValue = 4 / 7;  /* default: 1/4 note (index 4 of 8) */
 let filterCutoffValue = 0.8;
 let repeatSpeedValue = 0.5;
 let tiltEqValue = 0.5;
@@ -649,8 +649,8 @@ function drawSpringBrowser() {
 
     if (springAssignFiles.length === 0) {
         print(0, 16, 'No IR files found', 1);
-        print(0, 28, 'Add .aif files to', 1);
-        print(0, 39, 'springs/ folder', 1);
+        print(0, 28, 'Add .aif/.wav to', 1);
+        print(0, 39, 'springs/ or subdir', 1);
         print(0, 55, 'Back: exit', 1);
         return;
     }
@@ -662,8 +662,11 @@ function drawSpringBrowser() {
 
     for (let i = startIdx; i <= endIdx; i++) {
         const y = 14 + (i - startIdx) * 13;
-        /* Strip .aif or .wav extension for display */
-        const name = springAssignFiles[i].replace(/\.(aif|wav)$/i, '');
+        /* Strip extension + directory prefix for display.
+         * Files are stored as "Tank/Name.aif"; show just "Name" since
+         * tank names are embedded in the filenames (e.g. "Accu78-Filter 1"). */
+        const full = springAssignFiles[i].replace(/\.(aif|wav)$/i, '');
+        const name = full.includes('/') ? full.split('/').pop() : full;
         const truncated = name.length > 19 ? name.substring(0, 18) + '~' : name;
         if (i === idx) {
             fill_rect(0, y - 1, 128, 12, 1);
@@ -723,17 +726,17 @@ function getTimeLabel(rate01) {
 }
 
 function getDivisionIndex(value) {
-    let idx = Math.round(value * 5.0);
+    let idx = Math.round(value * 7.0);
     if (idx < 0) idx = 0;
-    if (idx > 5) idx = 5;
+    if (idx > 7) idx = 7;
     return idx;
 }
 
 function getDivisionValue(index) {
     let idx = index;
     if (idx < 0) idx = 0;
-    if (idx > 5) idx = 5;
-    return idx / 5.0;
+    if (idx > 7) idx = 7;
+    return idx / 7.0;
 }
 
 function getDivisionLabel(value) {
