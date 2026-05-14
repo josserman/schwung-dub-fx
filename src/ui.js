@@ -1191,7 +1191,9 @@ function handleKnob(knobIndex, delta) {
             return;
         }
         if (knobIndex === 3) {
-            setGroupedSlotParam(REVERB_SLOTS, 3, nudgeValue(slotParams[REVERB_SLOTS[0]][3], delta), 'Reverb', 'Width');
+            const newWidth = nudgeValue(slotParams[REVERB_SLOTS[0]][3], delta);
+            setGroupedSlotParam(REVERB_SLOTS, 3, newWidth, 'Reverb', 'Width');
+            showOverlay('Reverb', 'Width', Math.round(newWidth * 200) + '%');
             return;
         }
         if (knobIndex === 7) {
@@ -1287,7 +1289,7 @@ function handleKnobPeek(knobNote) {
             return;
         }
         if (knobNote === 3) {
-            showOverlay('Reverb', 'Width', slotParams[REVERB_SLOTS[0]][3].toFixed(2));
+            showOverlay('Reverb', 'Width', Math.round(slotParams[REVERB_SLOTS[0]][3] * 200) + '%');
             return;
         }
     }
