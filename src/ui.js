@@ -103,15 +103,15 @@ const SLOT_PARAM_NAMES = [
     ['Feedbk', 'Type',   'Level'],
     ['Feedbk', 'Type',   'Level'],
     ['Feedbk', 'Type',   'Level'],
-    /* Row 2: Reverb (pad slots 16-23 → engine slots 20-23): Size/HFD/Level */
-    ['Size',   'HFD',    'Level'],
-    ['Size',   'HFD',    'Level'],
-    ['Size',   'HFD',    'Level'],
-    ['Size',   'HFD',    'Level'],
-    ['Size',   'HFD',    'Level'],
-    ['Size',   'HFD',    'Level'],
-    ['Size',   'HFD',    'Level'],
-    ['Size',   'HFD',    'Level'],
+    /* Row 2: Reverb (pad slots 16-23 → engine slots 20-23): Size/Filter/Level */
+    ['Size',   'Filter', 'Level'],
+    ['Size',   'Filter', 'Level'],
+    ['Size',   'Filter', 'Level'],
+    ['Size',   'Filter', 'Level'],
+    ['Size',   'Filter', 'Level'],
+    ['Size',   'Filter', 'Level'],
+    ['Size',   'Filter', 'Level'],
+    ['Size',   'Filter', 'Level'],
     /* Row 1: Siren (pad slots 24-31): Rate/Depth/Vol */
     ['Rate',   'Depth',  'Vol'],
     ['Rate',   'Depth',  'Vol'],
@@ -769,7 +769,7 @@ function getKnobLabel(bank, knobIndex) {
         return ['Time', 'Feedbk', 'Filter', 'Vol', 'Warm', 'D/W', '---', 'Filt'][knobIndex];
     }
     if (bank === BANK_REVERB) {
-        return ['Size', 'HFD', 'Vol', '---', '---', '---', '---', 'Filt'][knobIndex];
+        return ['Size', 'Filter', 'Vol', '---', '---', '---', '---', 'Filt'][knobIndex];
     }
     if (bank === BANK_SIREN) {
         return ['Rate', 'Depth', 'Vol', '---', '---', '---', '---', 'Filt'][knobIndex];
@@ -1183,7 +1183,7 @@ function handleKnob(knobIndex, delta) {
             return;
         }
         if (knobIndex === 1) {
-            setGroupedSlotParam(REVERB_SLOTS, 1, nudgeValue(slotParams[REVERB_SLOTS[0]][1], delta), 'Reverb', 'HFD');
+            setGroupedSlotParam(REVERB_SLOTS, 1, nudgeValue(slotParams[REVERB_SLOTS[0]][1], delta), 'Reverb', 'Filter');
             return;
         }
         if (knobIndex === 2) {
@@ -1275,7 +1275,7 @@ function handleKnobPeek(knobNote) {
             return;
         }
         if (knobNote === 1) {
-            showOverlay('Reverb', 'HFD', slotParams[REVERB_SLOTS[0]][1].toFixed(2));
+            showOverlay('Reverb', 'Filter', slotParams[REVERB_SLOTS[0]][1].toFixed(2));
             return;
         }
         if (knobNote === 2) {

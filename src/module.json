@@ -2,7 +2,7 @@
     "id": "dub-fx",
     "name": "Dub FX",
     "abbrev": "DUB",
-    "version": "0.3.3",
+    "version": "0.3.4",
     "description": "Dub-oriented performance FX desk for Move with tape throws, reverb, isolator kills, DJ filter, and MIDImix control",
     "author": "charlesvestal",
     "ui": "ui.js",

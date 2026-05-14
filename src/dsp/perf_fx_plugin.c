@@ -71,10 +71,10 @@ static const char *FX_PARAM_NAMES[PFX_NUM_FX][PFX_SLOT_PARAMS] = {
     {"Feedbk", "Filter", "Level"},          /* Delay Dot8 */
     {"Feedbk", "Filter", "Level"},          /* Ping Pong */
     {"Feedbk", "Filter", "Level"},          /* PP Dot8 */
-    {"Time",   "Tone",   "Level"},          /* Reverb */
-    {"Time",   "Tone",   "Level"},          /* Hall */
-    {"Time",   "Dark",   "Level"},          /* Dark Verb */
-    {"Time",   "Tone",   "Level"},          /* Spring */
+    {"Time",   "Filter", "Level"},          /* Reverb */
+    {"Time",   "Filter", "Level"},          /* Hall */
+    {"Time",   "Filter", "Level"},          /* Dark Verb */
+    {"Time",   "Filter", "Level"},          /* Spring */
     /* Row 1: Distortion & Rhythm */
     {"Filter", "Tone",   "Mix"},            /* Bitcrush */
     {"Filter", "Tone",   "Mix"},            /* Downsample */
