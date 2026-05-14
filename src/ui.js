@@ -78,8 +78,8 @@ const FX_NAMES = [
     /* Row 3: Reverb lane */
     'REVERB', 'VERB 2', 'VERB 3', 'VERB 4',
     'VERB 5', 'VERB 6', 'VERB 7', 'VERB 8',
-    /* Row 4: Siren lane */
-    'BUBBLE', 'SIGNAL', 'SIGNAL 2', 'SILLY',
+    /* Row 1: iso kills (24-27) then siren pads (28-31) */
+    'HIGH', 'MID', 'LOW', 'SUB',
     'PING', 'LANDING', 'SHUB', 'SHOCK'
 ];
 
@@ -146,14 +146,12 @@ const SIREN_SLOTS = [10, 11, 15];
 const TOP_ROW_SLOTS = [0, 1, 2, 3, 4, 5, 6, 7];
 const ECHO_PAD_SLOTS = [8, 9, 10, 11, 12, 13, 14, 15];
 const REVERB_PAD_SLOTS = [16, 17, 18, 19, 20, 21, 22, 23];
-const SIREN_PAD_SLOTS = [24, 25, 26, 27, 28, 29, 30, 31];
+const ISO_PAD_SLOTS   = [24, 25, 26, 27];               /* Row 1 buttons 1-4: iso kills */
+const SIREN_PAD_SLOTS = [28, 29, 30, 31];
 const PAD_SLOT_TO_FX_SLOT = new Array(NUM_SLOTS).fill(-1);
 PAD_SLOT_TO_FX_SLOT[8] = 16;
 PAD_SLOT_TO_FX_SLOT[16] = 20;
-PAD_SLOT_TO_FX_SLOT[24] = 24;
-PAD_SLOT_TO_FX_SLOT[25] = 25;
-PAD_SLOT_TO_FX_SLOT[26] = 26;
-PAD_SLOT_TO_FX_SLOT[27] = 27;
+/* slots 24-27 are iso kill toggles — no engine slot */
 PAD_SLOT_TO_FX_SLOT[28] = 28;
 PAD_SLOT_TO_FX_SLOT[29] = 29;
 PAD_SLOT_TO_FX_SLOT[30] = 30;
@@ -423,13 +421,18 @@ function handleTapTempo() {
  * ================================================================ */
 
 function getPadColor(slot) {
+    /* Top-row iso kills (slots 0-3) */
     if (slot >= 0 && slot <= 3) {
         return isoValues[slot] > 0.01 ? BrightGreen : BrightRed;
+    }
+    /* Bottom-row iso kills (slots 24-27) — same green/red logic */
+    if (slot >= 24 && slot <= 27) {
+        return isoValues[slot - 24] > 0.01 ? BrightGreen : BrightRed;
     }
     if (slot === 7) {
         return filterMode === 0 ? BrightGreen : AzureBlue;
     }
-    if ((slot >= 4 && slot <= 6) || (slot >= 9 && slot <= 15) || (slot >= 17 && slot <= 23) || (slot >= 27 && slot <= 31)) {
+    if ((slot >= 4 && slot <= 6) || (slot >= 9 && slot <= 15) || (slot >= 17 && slot <= 23) || (slot >= 28 && slot <= 31)) {
         return DarkGrey;
     }
     if (fxLatched[slot]) {
@@ -971,6 +974,14 @@ function handlePadOn(note, velocity) {
         if (slot >= 0 && slot <= 3) {
             toggleIsoKill(slot);
             refreshPadLED(slot);
+            return;
+        }
+        /* Row 1 buttons 1-4: iso kill mirrors (same bands as top row) */
+        if (slot >= 24 && slot <= 27) {
+            toggleIsoKill(slot - 24);
+            refreshPadLED(slot);
+            /* Also refresh the matching top-row pad so both show the same state */
+            refreshPadLED(slot - 24);
             return;
         }
         if (slot === 7) {
