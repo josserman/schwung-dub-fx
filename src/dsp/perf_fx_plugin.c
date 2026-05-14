@@ -67,10 +67,10 @@ static const char *FX_PARAM_NAMES[PFX_NUM_FX][PFX_SLOT_PARAMS] = {
     {"Depth",  "Feedbk", "Mix"},            /* Flanger */
     {"Depth",  "Center", "Reso"},           /* Auto Filter */
     /* Row 2: Space Throws */
-    {"Feedbk", "Tone",   "Level"},          /* Delay 1/4 */
-    {"Feedbk", "Tone",   "Level"},          /* Delay Dot8 */
-    {"Feedbk", "Tone",   "Level"},          /* Ping Pong */
-    {"Feedbk", "Tone",   "Level"},          /* PP Dot8 */
+    {"Feedbk", "Filter", "Level"},          /* Delay 1/4 */
+    {"Feedbk", "Filter", "Level"},          /* Delay Dot8 */
+    {"Feedbk", "Filter", "Level"},          /* Ping Pong */
+    {"Feedbk", "Filter", "Level"},          /* PP Dot8 */
     {"Time",   "Tone",   "Level"},          /* Reverb */
     {"Time",   "Tone",   "Level"},          /* Hall */
     {"Time",   "Dark",   "Level"},          /* Dark Verb */
