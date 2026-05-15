@@ -72,12 +72,12 @@ const FX_NAMES = [
     /* Top row: desk controls */
     'HIGH', 'MID', 'LOW', 'DUB',
     'CTRL 5', 'CTRL 6', 'CTRL 7', 'FILTER MODE',
-    /* Row 2: Echo lane */
-    'ECHO', 'ECHO 2', 'ECHO 3', 'ECHO 4',
-    'ECHO 5', 'ECHO 6', 'ECHO 7', 'ECHO 8',
-    /* Row 3: Reverb lane */
-    'REVERB', 'VERB 2', 'VERB 3', 'VERB 4',
-    'VERB 5', 'VERB 6', 'VERB 7', 'VERB 8',
+    /* Row 3: Echo pads — pad 1 free (dial), pads 2-8 fixed divisions */
+    'ECHO', '1/4', 'D.8', '1/8',
+    '1/4T', '1/16', '1/2', '1 BAR',
+    /* Row 2: Reverb pads — 4 types wired, 4 reserved for future springs */
+    'ROOM', 'HALL', 'DUB VB', 'SPRING',
+    'VRB 5', 'VRB 6', 'VRB 7', 'VRB 8',
     /* Row 1: iso kills (24-27) then siren pads (28-31) */
     'HIGH', 'MID', 'LOW', 'SUB',
     'PING', 'LANDING', 'SHUB', 'SHOCK'
@@ -94,15 +94,15 @@ const SLOT_PARAM_NAMES = [
     ['Pattern','Gate',   'Revrse'],
     ['Feedbk', 'Filter', 'Mix'],
     ['Tone',   'WowFlt', 'Mix'],
-    /* Row 3: Echo (pad slots 8-15 → engine slots 16-19): Feedbk/Type/Level */
-    ['Feedbk', 'Type',   'Level'],
-    ['Feedbk', 'Type',   'Level'],
-    ['Feedbk', 'Type',   'Level'],
-    ['Feedbk', 'Type',   'Level'],
-    ['Feedbk', 'Type',   'Level'],
-    ['Feedbk', 'Type',   'Level'],
-    ['Feedbk', 'Type',   'Level'],
-    ['Feedbk', 'Type',   'Level'],
+    /* Row 3: Echo (all pads → engine slot 16): Feedbk/Filter/Level */
+    ['Feedbk', 'Filter', 'Level'],
+    ['Feedbk', 'Filter', 'Level'],
+    ['Feedbk', 'Filter', 'Level'],
+    ['Feedbk', 'Filter', 'Level'],
+    ['Feedbk', 'Filter', 'Level'],
+    ['Feedbk', 'Filter', 'Level'],
+    ['Feedbk', 'Filter', 'Level'],
+    ['Feedbk', 'Filter', 'Level'],
     /* Row 2: Reverb (pad slots 16-23 → engine slots 20-23): Size/Filter/Level */
     ['Size',   'Filter', 'Level'],
     ['Size',   'Filter', 'Level'],
@@ -135,12 +135,26 @@ const ECHO_TIME_DIVISIONS = [
     [4.0,   '1:1' ]
 ];
 const ECHO_TIME_STEP = 0.025;  /* ~40 jog clicks to sweep full range */
+
+/* Per-pad echo division presets (pad slots 8-15).
+ * null = free time (pad 1, uses dial). Others are log-scale values:
+ * div01 = log(beats/0.125) / log(32)  where mult = 0.125 * 32^div01 */
+const ECHO_PAD_DIVISIONS = [
+    null,   /* pad 1 (slot 8):  free — dial controls time */
+    0.600,  /* pad 2 (slot 9):  1/4  (1 beat)            */
+    0.517,  /* pad 3 (slot 10): D.8  (0.75 beat)         */
+    0.400,  /* pad 4 (slot 11): 1/8  (0.5 beat)          */
+    0.483,  /* pad 5 (slot 12): 1/4T (0.667 beat)        */
+    0.200,  /* pad 6 (slot 13): 1/16 (0.25 beat)         */
+    0.800,  /* pad 7 (slot 14): 1/2  (2 beats)           */
+    1.000   /* pad 8 (slot 15): 1 Bar (4 beats)           */
+];
 const BANK_MIX = 0;
 const BANK_ECHO = 1;
 const BANK_REVERB = 2;
 const BANK_SIREN = 3;
 const BANK_NAMES = ['MIX', 'ECHO', 'VERB', 'SIREN'];
-const ECHO_SLOTS = [16, 17, 18, 19];
+const ECHO_SLOTS = [16]; /* All echo pads share one delay slot */
 const REVERB_SLOTS = [20, 21, 22, 23];
 const SIREN_SLOTS = [10, 11, 15];
 const TOP_ROW_SLOTS = [0, 1, 2, 3, 4, 5, 6, 7];
@@ -149,8 +163,13 @@ const REVERB_PAD_SLOTS = [16, 17, 18, 19, 20, 21, 22, 23];
 const ISO_PAD_SLOTS   = [24, 25, 26, 27];               /* Row 1 buttons 1-4: iso kills */
 const SIREN_PAD_SLOTS = [28, 29, 30, 31];
 const PAD_SLOT_TO_FX_SLOT = new Array(NUM_SLOTS).fill(-1);
-PAD_SLOT_TO_FX_SLOT[8] = 16;
-PAD_SLOT_TO_FX_SLOT[16] = 20;
+/* Echo row: all 8 pads → single delay engine slot 16 */
+for (let _i = 8; _i <= 15; _i++) PAD_SLOT_TO_FX_SLOT[_i] = 16;
+/* Reverb row: 4 types wired (Room/Hall/DubVerb/Spring), pads 20-23 reserved */
+PAD_SLOT_TO_FX_SLOT[16] = 20;  /* Room    */
+PAD_SLOT_TO_FX_SLOT[17] = 21;  /* Hall    */
+PAD_SLOT_TO_FX_SLOT[18] = 22;  /* Dub Verb */
+PAD_SLOT_TO_FX_SLOT[19] = 23;  /* Spring  */
 /* slots 24-27 are iso kill toggles — no engine slot */
 PAD_SLOT_TO_FX_SLOT[28] = 28;
 PAD_SLOT_TO_FX_SLOT[29] = 29;
@@ -432,7 +451,7 @@ function getPadColor(slot) {
     if (slot === 7) {
         return filterMode === 0 ? BrightGreen : AzureBlue;
     }
-    if ((slot >= 4 && slot <= 6) || (slot >= 9 && slot <= 15) || (slot >= 17 && slot <= 23) || (slot >= 28 && slot <= 31)) {
+    if ((slot >= 4 && slot <= 6) || (slot >= 20 && slot <= 23) || (slot >= 28 && slot <= 31)) {
         return DarkGrey;
     }
     if (fxLatched[slot]) {
@@ -997,9 +1016,19 @@ function handlePadOn(note, velocity) {
         }
     }
 
+    /* Echo pads with preset divisions: stamp the time before activating */
+    if (!shiftHeld && ECHO_PAD_SLOTS.includes(slot)) {
+        const presetDiv = ECHO_PAD_DIVISIONS[slot - 8];
+        if (presetDiv !== null) {
+            echoDivisionValue = presetDiv;
+            sendParam('echo_division', echoDivisionValue.toFixed(3));
+            showEchoTimeOverlay();
+        }
+    }
+
     if (shiftHeld) {
-        /* Shift+tap FX_SPRING pad (slot 23) = enter spring IR browser */
-        if (slot === 23) {
+        /* Shift+tap FX_SPRING pad (slot 19) = enter spring IR browser */
+        if (slot === 19) {
             enterSpringAssignMode();
             return;
         }
